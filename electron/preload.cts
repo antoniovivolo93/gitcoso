@@ -6,6 +6,8 @@ const api: BranchFlowApi = {
   refreshRepository: (repoPath) => ipcRenderer.invoke("repo:refresh", repoPath),
   getCommitDetails: (repoPath, hash) => ipcRenderer.invoke("commit:details", repoPath, hash),
   checkoutBranch: (repoPath, branch) => ipcRenderer.invoke("branch:checkout", repoPath, branch),
+  checkoutRemoteBranch: (repoPath, remoteBranch) =>
+    ipcRenderer.invoke("branch:checkout-remote", repoPath, remoteBranch),
   createBranch: (repoPath, name, checkout) =>
     ipcRenderer.invoke("branch:create", repoPath, name, checkout),
   commit: (repoPath, message) => ipcRenderer.invoke("repo:commit", repoPath, message),

@@ -3,24 +3,25 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { FolderOpen, GitMerge } from "lucide-react";
 import { formatDate } from "../lib/utils";
 import { useRepositoryStore } from "../store/repositoryStore";
+import { branchHiddenKey, useBranchVisibilityStore } from "../store/branchVisibilityStore";
 import { cn } from "../lib/utils";
+import type { Branch, BranchKind, CommitNode } from "../shared/types";
 import { Button } from "./ui/Button";
-import type { BranchKind } from "../shared/types";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const TOP_OFFSET = 20;
-const LANE_WIDTH = 24;
-const GRAPH_LEFT = 32;
-const GRAPH_RIGHT_PADDING = 90;
-const NODE_RADIUS = 7;
-const NODE_RADIUS_SELECTED = 9;
+const TOP_OFFSET = 28;
+const LANE_WIDTH = 20;
+const GRAPH_LEFT = 28;
+const GRAPH_RIGHT_PADDING = 126;
+const NODE_RADIUS = 11;
+const NODE_RADIUS_SELECTED = 14;
 
 type DensityMode = "compact" | "normal" | "expanded";
 const DENSITY_ROW_HEIGHTS: Record<DensityMode, number> = {
-  compact: 28,
-  normal: 36,
-  expanded: 46,
+  compact: 34,
+  normal: 44,
+  expanded: 54,
 };
 
 // ─── Main Component ──────────────────────────────────────────────────────────
@@ -34,6 +35,7 @@ export function CommitGraph() {
     loading,
     desktopReady,
   } = useRepositoryStore();
+  const { hiddenBranches, focusedBranch } = useBranchVisibilityStore();
   const [hoveredLane, setHoveredLane] = useState<number | null>(null);
   const [tooltip, setTooltip] = useState<{
     commit: Commit;
@@ -44,19 +46,34 @@ export function CommitGraph() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const rowHeight = DENSITY_ROW_HEIGHTS[density];
-  const commits = snapshot.commits;
+  const repoKey = snapshot.path ?? "no-repository";
+  const visibleBranches = useMemo(
+    () => snapshot.branches.filter((branch) => !hiddenBranches.has(branchHiddenKey(repoKey, branch.kind, branch.name))),
+    [snapshot.branches, hiddenBranches, repoKey],
+  );
+  const branchKinds = useMemo(
+    () => new Map(visibleBranches.map((branch) => [branch.name, branch.kind])),
+    [visibleBranches],
+  );
+  const commits = useMemo(
+    () => filterCommitsByVisibleBranches(snapshot.commits, snapshot.branches, hiddenBranches, repoKey),
+    [snapshot.commits, snapshot.branches, hiddenBranches, repoKey],
+  );
+  const visualLaneByHash = useMemo(() => getCompactVisualLanes(snapshot.commits), [snapshot.commits]);
+  const branchLane = useMemo(() => getBranchLaneMap(commits, visualLaneByHash), [commits, visualLaneByHash]);
+  const focusedBranchLane = focusedBranch ? branchLane.get(focusedBranch) ?? null : null;
+  const emphasisLane = hoveredLane ?? focusedBranchLane;
   const indexByHash = useMemo(
     () => new Map(commits.map((c, i) => [c.hash, i])),
     [commits],
   );
-  const maxLane = useMemo(
-    () => Math.max(0, ...commits.map((c) => c.lane)),
-    [commits],
+  const maxVisualLane = useMemo(
+    () => Math.max(0, ...commits.map((commit) => getVisualLane(commit, visualLaneByHash))),
+    [commits, visualLaneByHash],
   );
   const graphWidth =
-    GRAPH_LEFT + (maxLane + 1) * LANE_WIDTH + GRAPH_RIGHT_PADDING;
+    GRAPH_LEFT + (maxVisualLane + 1) * LANE_WIDTH + GRAPH_RIGHT_PADDING;
   const contentOffset = graphWidth;
-  const minContentWidth = contentOffset + 760;
   const height = commits.length * rowHeight + TOP_OFFSET * 2;
 
   // Virtualizer
@@ -94,9 +111,22 @@ export function CommitGraph() {
     if (idx !== undefined) virtualizer.scrollToIndex(idx, { align: "auto" });
   }, [selectedHash, indexByHash, virtualizer]);
 
+  useEffect(() => {
+    if (!selectedHash || indexByHash.has(selectedHash) || !commits[0]) return;
+    void setSelectedCommit(commits[0].hash);
+  }, [commits, indexByHash, selectedHash, setSelectedCommit]);
+
+  useEffect(() => {
+    if (!snapshot.activeBranch || !commits.length) return;
+    const activeIndex = commits.findIndex((commit) => commit.refs.includes(snapshot.activeBranch));
+    if (activeIndex !== -1) {
+      virtualizer.scrollToIndex(activeIndex, { align: "center" });
+    }
+  }, [commits, snapshot.activeBranch, virtualizer]);
+
   if (!snapshot.path) {
     return (
-      <div className="grid h-[calc(100vh-118px)] place-items-center px-8">
+      <div className="grid h-full place-items-center px-8">
         <div className="max-w-md text-center">
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-lg border border-white/10 bg-white/[0.06] text-accent-blue shadow-glow">
             <FolderOpen size={24} />
@@ -129,7 +159,7 @@ export function CommitGraph() {
 
   if (commits.length === 0) {
     return (
-      <div className="grid h-[calc(100vh-118px)] place-items-center px-8 text-center">
+      <div className="grid h-full place-items-center px-8 text-center">
         <div>
           <h2 className="mb-2 text-lg font-semibold text-slate-100">
             No commits found
@@ -146,16 +176,16 @@ export function CommitGraph() {
   return (
     <div
       ref={scrollRef}
-      className="graph-container h-[calc(100vh-64px)] overflow-auto bg-[#0c1018] focus:outline-none"
+      className="graph-container h-full overflow-auto bg-[#0c1018] focus:outline-none"
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div className="relative" style={{ minWidth: minContentWidth }}>
+      <div className="relative min-w-0">
         {/* Sticky Header */}
         <div
           className="sticky top-0 z-30 grid h-9 items-center border-b border-white/[0.06] bg-[#161b26]/95 text-[11px] font-semibold uppercase tracking-wide text-slate-400 backdrop-blur"
           style={{
-            gridTemplateColumns: `${graphWidth}px minmax(320px,1fr) 112px 144px 110px`,
+            gridTemplateColumns: `${graphWidth}px minmax(0,1fr) 86px 118px 82px`,
           }}
         >
           <span className="flex items-center gap-2 px-4">
@@ -223,25 +253,29 @@ export function CommitGraph() {
             {/* Lane guide lines */}
             <GraphLaneGuides
               commits={commits}
-              maxLane={maxLane}
+              visualLaneByHash={visualLaneByHash}
+              maxLane={maxVisualLane}
               rowHeight={rowHeight}
-              hoveredLane={hoveredLane}
+              hoveredLane={emphasisLane}
             />
 
             {/* Edges */}
             <GraphEdges
               commits={commits}
               indexByHash={indexByHash}
+              visualLaneByHash={visualLaneByHash}
               rowHeight={rowHeight}
-              hoveredLane={hoveredLane}
+              hoveredLane={emphasisLane}
             />
 
             {/* Nodes */}
             <GraphNodes
               commits={commits}
               selectedHash={selectedHash}
+              activeBranch={snapshot.activeBranch}
+              visualLaneByHash={visualLaneByHash}
               rowHeight={rowHeight}
-              hoveredLane={hoveredLane}
+              hoveredLane={emphasisLane}
               onHoverLane={setHoveredLane}
               onTooltip={setTooltip}
             />
@@ -249,9 +283,8 @@ export function CommitGraph() {
             {/* Branch labels */}
             <BranchLabels
               commits={commits}
-              branchKinds={
-                new Map(snapshot.branches.map((b) => [b.name, b.kind]))
-              }
+              branchKinds={branchKinds}
+              visualLaneByHash={visualLaneByHash}
               graphWidth={graphWidth}
               rowHeight={rowHeight}
             />
@@ -261,16 +294,18 @@ export function CommitGraph() {
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const commit = commits[virtualRow.index];
             const selected = selectedHash === commit.hash;
+            const visualLane = getVisualLane(commit, visualLaneByHash);
             return (
               <div
                 key={`hl-${commit.hash}`}
                 className={cn(
                   "absolute left-0 right-3 border-y transition-colors duration-200",
                   selected
-                    ? "border-sky-400/30 bg-sky-500/[0.12]"
+                    ? "border-cyan-300/40 bg-cyan-400/[0.14] shadow-[inset_3px_0_0_rgba(34,211,238,0.9)]"
                     : virtualRow.index % 2 === 0
                       ? "border-transparent bg-white/[0.015]"
                       : "border-transparent",
+                  emphasisLane !== null && visualLane !== emphasisLane && "opacity-45"
                 )}
                 style={{
                   top:
@@ -286,36 +321,38 @@ export function CommitGraph() {
             const commit = commits[virtualRow.index];
             const index = virtualRow.index;
             const selected = selectedHash === commit.hash;
+            const visualLane = getVisualLane(commit, visualLaneByHash);
             return (
               <button
                 key={commit.hash}
                 onClick={() => setSelectedCommit(commit.hash)}
-                onMouseEnter={() => setHoveredLane(commit.lane)}
+                onMouseEnter={() => setHoveredLane(visualLane)}
                 onMouseLeave={() => setHoveredLane(null)}
                 className={cn(
                   "absolute right-3 z-20 grid items-center gap-3 rounded-md px-3 text-left transition-all duration-150",
                   selected
-                    ? "text-white bg-sky-500/[0.08]"
-                    : "text-slate-300 hover:text-white hover:bg-white/[0.03]",
+                    ? "bg-cyan-400/[0.08] text-white"
+                    : "text-slate-300 hover:bg-white/[0.04] hover:text-white",
+                  emphasisLane !== null && visualLane !== emphasisLane && "opacity-55"
                 )}
                 style={{
                   height: rowHeight - 4,
                   left: contentOffset,
                   top: TOP_OFFSET + index * rowHeight - rowHeight / 2 + 2,
-                  gridTemplateColumns: "minmax(320px,1fr) 112px 144px 110px",
+                  gridTemplateColumns: "minmax(0,1fr) 86px 118px 82px",
                 }}
               >
                 <span className="flex min-w-0 items-center gap-2">
                   {commit.parents.length > 1 ? (
                     <GitMerge size={12} className="shrink-0 text-amber-300" />
                   ) : null}
-                  <span className="truncate text-[12px] font-semibold">
+                  <span className="truncate text-[13px] font-semibold">
                     {commit.message}
                   </span>
-                  {commit.refs.slice(0, 1).map((ref) => (
+                  {commit.refs.filter((ref) => isVisibleRef(ref, branchKinds)).slice(0, 1).map((ref) => (
                     <span
                       key={ref}
-                      className="max-w-24 shrink-0 truncate rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold text-blue-200 border border-white/10"
+                      className="max-w-28 shrink-0 truncate rounded-full border border-white/10 bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold text-cyan-100"
                     >
                       {compactRef(ref)}
                     </span>
@@ -418,11 +455,13 @@ function DensityToggle({
 
 function GraphLaneGuides({
   commits,
+  visualLaneByHash,
   maxLane,
   rowHeight,
   hoveredLane,
 }: {
   commits: Commit[];
+  visualLaneByHash: Map<string, number>;
   maxLane: number;
   rowHeight: number;
   hoveredLane: number | null;
@@ -434,13 +473,12 @@ function GraphLaneGuides({
         y="0"
         width={GRAPH_LEFT + (maxLane + 1) * LANE_WIDTH + GRAPH_RIGHT_PADDING}
         height="100%"
-        fill="#080c14"
-        opacity="0.92"
+        fill="#080b12"
       />
       {Array.from({ length: maxLane + 1 }, (_, lane) => {
         const laneCommits = commits
           .map((c, i) => ({ c, i }))
-          .filter(({ c }) => c.lane === lane);
+          .filter(({ c }) => getVisualLane(c, visualLaneByHash) === lane);
         if (laneCommits.length === 0) return null;
         const first = laneCommits[0].i;
         const last = laneCommits[laneCommits.length - 1].i;
@@ -450,12 +488,12 @@ function GraphLaneGuides({
           <line
             key={`lane-${lane}`}
             x1={x}
-            y1={rowY(first, rowHeight)}
+            y1={Math.max(8, rowY(first, rowHeight) - rowHeight * 0.35)}
             x2={x}
-            y2={rowY(last, rowHeight)}
+            y2={rowY(last, rowHeight) + rowHeight * 0.35}
             stroke={laneColor(lane)}
-            strokeWidth={isHovered ? "2" : "1.2"}
-            opacity={hoveredLane === null ? "0.18" : isHovered ? "0.5" : "0.08"}
+            strokeWidth={isHovered ? "3.4" : "2.1"}
+            opacity={hoveredLane === null ? "0.28" : isHovered ? "0.72" : "0.08"}
             strokeLinecap="round"
             className="transition-opacity duration-200"
           />
@@ -468,18 +506,21 @@ function GraphLaneGuides({
 function GraphEdges({
   commits,
   indexByHash,
+  visualLaneByHash,
   rowHeight,
   hoveredLane,
 }: {
   commits: Commit[];
   indexByHash: Map<string, number>;
+  visualLaneByHash: Map<string, number>;
   rowHeight: number;
   hoveredLane: number | null;
 }) {
   return (
     <>
       {commits.map((commit, index) => {
-        const fromX = laneX(commit.lane);
+        const commitLane = getVisualLane(commit, visualLaneByHash);
+        const fromX = laneX(commitLane);
         const fromY = rowY(index, rowHeight);
         const parentEdges = commit.parents
           .map((p) => indexByHash.get(p))
@@ -488,23 +529,24 @@ function GraphEdges({
 
         return parentEdges.map((parentIndex, edgeIndex) => {
           const parent = commits[parentIndex];
-          const toX = laneX(parent.lane);
+          const parentLane = getVisualLane(parent, visualLaneByHash);
+          const toX = laneX(parentLane);
           const toY = rowY(parentIndex, rowHeight);
           const primary = edgeIndex === 0;
-          const edgeLane = primary ? commit.lane : parent.lane;
+          const edgeLane = primary ? commitLane : parentLane;
           const dimmed =
             hoveredLane !== null &&
             hoveredLane !== edgeLane &&
-            hoveredLane !== commit.lane;
+            hoveredLane !== commitLane;
 
           return (
             <path
               key={`${commit.hash}-${parent.hash}`}
               d={buildSmoothEdge(fromX, fromY, toX, toY)}
               stroke={primary ? commit.color : parent.color}
-              strokeWidth={primary ? "2.2" : "1.6"}
+              strokeWidth={primary ? "3" : "2.4"}
               fill="none"
-              opacity={dimmed ? "0.12" : primary ? "0.88" : "0.55"}
+              opacity={dimmed ? "0.12" : primary ? "0.95" : "0.7"}
               strokeLinecap="round"
               strokeLinejoin="round"
               className="transition-opacity duration-200"
@@ -519,6 +561,8 @@ function GraphEdges({
 function GraphNodes({
   commits,
   selectedHash,
+  activeBranch,
+  visualLaneByHash,
   rowHeight,
   hoveredLane,
   onHoverLane,
@@ -526,6 +570,8 @@ function GraphNodes({
 }: {
   commits: Commit[];
   selectedHash: string;
+  activeBranch: string;
+  visualLaneByHash: Map<string, number>;
   rowHeight: number;
   hoveredLane: number | null;
   onHoverLane: (lane: number | null) => void;
@@ -534,13 +580,15 @@ function GraphNodes({
   return (
     <>
       {commits.map((commit, index) => {
-        const x = laneX(commit.lane);
+        const visualLane = getVisualLane(commit, visualLaneByHash);
+        const x = laneX(visualLane);
         const y = rowY(index, rowHeight);
         const selected = selectedHash === commit.hash;
         const isMerge = commit.parents.length > 1;
         const hasBranchRef = commit.refs.some((r) => !r.startsWith("tag:"));
-        const dimmed = hoveredLane !== null && hoveredLane !== commit.lane;
-        const r = selected ? NODE_RADIUS_SELECTED : NODE_RADIUS;
+        const isHead = commit.refs.includes(activeBranch);
+        const dimmed = hoveredLane !== null && hoveredLane !== visualLane;
+        const r = selected ? NODE_RADIUS_SELECTED : isHead ? NODE_RADIUS + 1.8 : NODE_RADIUS;
 
         return (
           <g
@@ -548,7 +596,7 @@ function GraphNodes({
             className="pointer-events-auto cursor-pointer"
             style={{ opacity: dimmed ? 0.3 : 1, transition: "opacity 200ms" }}
             onMouseEnter={(e) => {
-              onHoverLane(commit.lane);
+              onHoverLane(visualLane);
               onTooltip({ commit, x: e.clientX, y: e.clientY });
             }}
             onMouseLeave={() => {
@@ -557,43 +605,62 @@ function GraphNodes({
             }}
           >
             {/* Outer glow for branch tips */}
-            {hasBranchRef && !dimmed ? (
+            {(hasBranchRef || isHead) && !dimmed ? (
               <circle
                 cx={x}
                 cy={y}
-                r={r + 4}
+                r={r + 5}
                 fill="none"
                 stroke={commit.color}
-                strokeWidth="1.5"
-                opacity="0.35"
+                strokeWidth={isHead ? "2" : "1.5"}
+                opacity={isHead ? "0.55" : "0.35"}
                 className="animate-pulse-subtle"
               />
             ) : null}
 
             {/* Main node */}
+            <clipPath id={`avatar-clip-${commit.hash}`}>
+              <circle cx={x} cy={y} r={Math.max(1, r - 1.4)} />
+            </clipPath>
             <circle
               cx={x}
               cy={y}
               r={r}
-              fill={`url(#node-gradient-${commit.lane % 12})`}
+              fill="#111827"
               stroke={commit.color}
-              strokeWidth={selected ? 3 : isMerge ? 2.8 : 2}
+              strokeWidth={selected ? 3.2 : isHead ? 2.8 : isMerge ? 2.6 : 2.1}
               filter={selected ? "url(#node-glow)" : "url(#node-shadow)"}
             />
+            <image
+              href={commit.avatarUrl}
+              x={x - r + 1.4}
+              y={y - r + 1.4}
+              width={(r - 1.4) * 2}
+              height={(r - 1.4) * 2}
+              preserveAspectRatio="xMidYMid slice"
+              clipPath={`url(#avatar-clip-${commit.hash})`}
+              opacity={dimmed ? "0.5" : "0.95"}
+            />
+            <circle
+              cx={x}
+              cy={y}
+              r={r}
+              fill="none"
+              stroke={commit.color}
+              strokeWidth={selected ? 3.2 : isHead ? 2.8 : isMerge ? 2.6 : 2.1}
+            />
 
-            {/* Double ring for merge commits */}
             {isMerge ? (
-              <circle
-                cx={x}
-                cy={y}
-                r={r + 3}
+              <path
+                d={`M ${x - 3.2} ${y - 1.8} C ${x - 1.3} ${y - 4.5}, ${x + 2.8} ${y - 4.2}, ${x + 3.4} ${y - 1.2} M ${x - 3.2} ${y + 2.4} C ${x - 0.8} ${y - 0.4}, ${x + 2.8} ${y - 0.2}, ${x + 3.4} ${y + 2.8}`}
                 fill="none"
-                stroke={commit.color}
-                strokeWidth="1.2"
-                opacity="0.6"
-                strokeDasharray="3 2"
+                stroke="#f8fafc"
+                strokeWidth="1.1"
+                opacity="0.8"
+                strokeLinecap="round"
               />
             ) : null}
+            {isHead && !isMerge ? <circle cx={x + r - 2.2} cy={y + r - 2.2} r="2.6" fill="#f8fafc" stroke={commit.color} strokeWidth="1" opacity="0.95" /> : null}
           </g>
         );
       })}
@@ -604,11 +671,13 @@ function GraphNodes({
 function BranchLabels({
   commits,
   branchKinds,
+  visualLaneByHash,
   graphWidth,
   rowHeight,
 }: {
   commits: Commit[];
   branchKinds: Map<string, BranchKind>;
+  visualLaneByHash: Map<string, number>;
   graphWidth: number;
   rowHeight: number;
 }) {
@@ -626,12 +695,13 @@ function BranchLabels({
           .slice(0, 2);
 
         return tags.map((tag, tagIndex) => {
-          const kindText = getKindText(tag.kinds);
           const isRemote = tag.kinds.has("remote") && !tag.kinds.has("local");
+          const isLocal = tag.kinds.has("local") && !tag.kinds.has("remote");
           const textLen = Math.min(tag.displayName.length, 14);
           const isBoth = tag.kinds.has("local") && tag.kinds.has("remote");
-          const width = textLen * 6 + (isBoth ? 38 : 28);
-          const x = Math.min(laneX(commit.lane) + 14, graphWidth - width - 6);
+          const kindText = isBoth ? "L+R" : isRemote ? "REM" : "LOC";
+          const width = textLen * 6.1 + (isBoth ? 54 : isRemote ? 48 : 44);
+          const x = Math.min(laneX(getVisualLane(commit, visualLaneByHash)) + 12, graphWidth - width - 6);
           const y = rowY(index, rowHeight) - 9 + tagIndex * 20;
 
           return (
@@ -644,21 +714,36 @@ function BranchLabels({
                 y={y}
                 width={width}
                 height="18"
-                rx="9"
-                fill={commit.color}
-                opacity="0.85"
+                rx="6"
+                fill={isRemote ? "#101826" : commit.color}
+                opacity={isRemote ? "0.88" : "0.9"}
               />
               <rect
                 x={x}
                 y={y}
                 width={width}
                 height="18"
-                rx="9"
+                rx="6"
                 fill="none"
-                stroke="#ffffff"
-                strokeWidth="0.5"
-                opacity="0.15"
+                stroke={isRemote ? commit.color : "#ffffff"}
+                strokeWidth={isRemote ? "1.4" : isBoth ? "1" : "0.5"}
+                strokeDasharray={isRemote ? "3 2" : undefined}
+                opacity={isRemote ? "0.9" : isBoth ? "0.42" : "0.18"}
               />
+              {isBoth ? (
+                <rect
+                  x={x + 2}
+                  y={y + 2}
+                  width={width - 4}
+                  height="14"
+                  rx="4"
+                  fill="none"
+                  stroke="#ecfeff"
+                  strokeWidth="0.7"
+                  strokeDasharray="3 2"
+                  opacity="0.7"
+                />
+              ) : null}
               {/* Icon */}
               {isRemote ? (
                 <g transform={`translate(${x + 5}, ${y + 4})`}>
@@ -701,8 +786,21 @@ function BranchLabels({
                   />
                 </g>
               )}
+              {isBoth ? (
+                <g transform={`translate(${x + 12}, ${y + 4})`}>
+                  <circle
+                    cx="5"
+                    cy="5"
+                    r="3.2"
+                    fill="none"
+                    stroke="#fff"
+                    strokeWidth="0.9"
+                    opacity="0.88"
+                  />
+                </g>
+              ) : null}
               <text
-                x={x + 17}
+                x={x + (isBoth ? 24 : 17)}
                 y={y + 12.5}
                 fill="#f8fafc"
                 fontSize="9"
@@ -712,12 +810,12 @@ function BranchLabels({
                 {tag.displayName.slice(0, 14)}
               </text>
               <text
-                x={x + width - kindText.length * 5.5 - 5}
+                x={x + width - kindText.length * 4.8 - 5}
                 y={y + 12.5}
-                fill="#c4e0ff"
-                fontSize="7.5"
-                fontWeight="800"
-                opacity="0.7"
+                fill={isLocal ? "#052e2f" : "#ecfeff"}
+                fontSize="7.2"
+                fontWeight="900"
+                opacity={isLocal ? "0.72" : "0.88"}
               >
                 {kindText}
               </text>
@@ -743,7 +841,7 @@ function groupBranchTags(
 ): BranchTag[] {
   const tags = new Map<string, BranchTag>();
   refs
-    .filter((ref) => !ref.startsWith("tag:"))
+    .filter((ref) => isVisibleRef(ref, branchKinds))
     .forEach((ref) => {
       const kind = getRefKind(ref, branchKinds);
       const displayName = getBranchDisplayName(ref, kind);
@@ -759,6 +857,159 @@ function groupBranchTags(
   return [...tags.values()].sort(
     (a, b) => Number(b.kinds.size) - Number(a.kinds.size),
   );
+}
+
+type LaneInterval = {
+  lane: number;
+  start: number;
+  end: number;
+  priority: number;
+};
+
+function getCompactVisualLanes(commits: CommitNode[]) {
+  const intervals = getLaneIntervals(commits);
+  const visualLaneByDataLane = new Map<number, number>();
+  const visualLaneEnd: number[] = [];
+
+  intervals.forEach((interval) => {
+    const freeLane = visualLaneEnd.findIndex((end) => end < interval.start);
+    const visualLane = freeLane === -1 ? visualLaneEnd.length : freeLane;
+    visualLaneEnd[visualLane] = interval.end;
+    visualLaneByDataLane.set(interval.lane, visualLane);
+  });
+
+  return new Map(commits.map((commit) => [commit.hash, visualLaneByDataLane.get(commit.lane) ?? 0]));
+}
+
+function getLaneIntervals(commits: CommitNode[]): LaneInterval[] {
+  const intervals = new Map<number, LaneInterval>();
+  const indexByHash = new Map(commits.map((commit, index) => [commit.hash, index]));
+
+  commits.forEach((commit, index) => {
+    const interval = intervals.get(commit.lane) ?? {
+      lane: commit.lane,
+      start: index,
+      end: index,
+      priority: Number.MAX_SAFE_INTEGER,
+    };
+
+    interval.start = Math.min(interval.start, index);
+    interval.end = Math.max(interval.end, index);
+    if (commit.refs.some((ref) => ref === "main" || ref === "master" || ref.endsWith("/main") || ref.endsWith("/master"))) {
+      interval.priority = Math.min(interval.priority, 0);
+    } else if (commit.refs.some((ref) => !ref.startsWith("tag:"))) {
+      interval.priority = Math.min(interval.priority, 1);
+    }
+
+    commit.parents.forEach((parentHash) => {
+      const parentIndex = indexByHash.get(parentHash);
+      if (parentIndex !== undefined) {
+        interval.end = Math.max(interval.end, parentIndex);
+      }
+    });
+
+    intervals.set(commit.lane, interval);
+  });
+
+  return [...intervals.values()].sort(
+    (a, b) =>
+      a.start - b.start ||
+      a.priority - b.priority ||
+      a.end - b.end ||
+      a.lane - b.lane,
+  );
+}
+
+function getVisualLane(commit: CommitNode, visualLaneByHash: Map<string, number>) {
+  return visualLaneByHash.get(commit.hash) ?? 0;
+}
+
+function getBranchLaneMap(commits: CommitNode[], visualLaneByHash: Map<string, number>) {
+  const branchLane = new Map<string, number>();
+  commits.forEach((commit) => {
+    const visualLane = getVisualLane(commit, visualLaneByHash);
+    commit.refs
+      .filter((ref) => !ref.startsWith("tag:"))
+      .forEach((ref) => branchLane.set(ref, visualLane));
+  });
+  return branchLane;
+}
+
+function filterCommitsByVisibleBranches(
+  commits: CommitNode[],
+  branches: Branch[],
+  hiddenBranches: Set<string>,
+  repoKey: string,
+) {
+  if (!branches.length) return commits;
+
+  const hiddenBranchNames = new Set(
+    branches
+      .filter((branch) => hiddenBranches.has(branchHiddenKey(repoKey, branch.kind, branch.name)))
+      .map((branch) => branch.name),
+  );
+  if (!hiddenBranchNames.size) return commits;
+
+  const visibleBranchNames = new Set(
+    branches
+      .filter((branch) => !hiddenBranches.has(branchHiddenKey(repoKey, branch.kind, branch.name)))
+      .map((branch) => branch.name),
+  );
+  const byHash = new Map(commits.map((commit) => [commit.hash, commit]));
+  const hiddenTips = getBranchTipHashes(commits, branches, hiddenBranchNames);
+  if (!hiddenTips.size) return commits;
+
+  const visibleTips = getBranchTipHashes(commits, branches, visibleBranchNames);
+  const hiddenReachable = collectReachableCommits(hiddenTips, byHash);
+  const visibleReachable = collectReachableCommits(visibleTips, byHash);
+
+  return commits.filter((commit) => !hiddenReachable.has(commit.hash) || visibleReachable.has(commit.hash));
+}
+
+function getBranchTipHashes(
+  commits: CommitNode[],
+  branches: Branch[],
+  branchNames: Set<string>,
+) {
+  const tips = new Set<string>();
+  const branchByName = new Map(branches.map((branch) => [branch.name, branch]));
+
+  commits.forEach((commit) => {
+    commit.refs.forEach((ref) => {
+      if (branchNames.has(ref)) {
+        tips.add(commit.hash);
+      }
+    });
+  });
+
+  branchNames.forEach((name) => {
+    const lastCommit = branchByName.get(name)?.lastCommit;
+    if (lastCommit) {
+      tips.add(lastCommit);
+    }
+  });
+
+  return tips;
+}
+
+function collectReachableCommits(tips: Set<string>, byHash: Map<string, CommitNode>) {
+  const reachable = new Set<string>();
+  const stack = [...tips];
+
+  while (stack.length) {
+    const hash = stack.pop();
+    if (!hash || reachable.has(hash)) continue;
+    const commit = byHash.get(hash);
+    if (!commit) continue;
+    reachable.add(hash);
+    stack.push(...commit.parents);
+  }
+
+  return reachable;
+}
+
+function isVisibleRef(ref: string, branchKinds: Map<string, BranchKind>) {
+  return !ref.startsWith("tag:") && branchKinds.has(ref);
 }
 
 function getRefKind(
@@ -791,14 +1042,13 @@ function rowY(index: number, rowHeight: number) {
 
 function laneColor(lane: number) {
   const colors = [
-    "#8b5cf6",
     "#38bdf8",
+    "#c084fc",
     "#34d399",
     "#fb7185",
-    "#fbbf24",
-    "#a78bfa",
+    "#f59e0b",
     "#22d3ee",
-    "#f97316",
+    "#a78bfa",
     "#4ade80",
     "#e879f9",
     "#60a5fa",
@@ -815,9 +1065,7 @@ function compactRef(ref: string) {
 }
 
 /**
- * Build a smooth S-curve edge between two nodes.
- * Same lane → straight vertical line.
- * Cross lane → cubic Bézier with vertical tangents at both endpoints.
+ * Build a compact lane change: short curve first, then straight vertical line.
  */
 function buildSmoothEdge(
   fromX: number,
@@ -828,8 +1076,10 @@ function buildSmoothEdge(
   if (fromX === toX) return `M ${fromX} ${fromY} L ${toX} ${toY}`;
 
   const verticalDist = toY - fromY;
-  const cp1Y = fromY + verticalDist * 0.35;
-  const cp2Y = toY - verticalDist * 0.35;
+  const curveHeight = Math.min(Math.max(Math.abs(verticalDist) * 0.28, 14), 30);
+  const curveEndY = fromY + Math.sign(verticalDist || 1) * curveHeight;
+  const cp1Y = fromY + (curveEndY - fromY) * 0.45;
+  const cp2Y = fromY + (curveEndY - fromY) * 0.75;
 
-  return `M ${fromX} ${fromY} C ${fromX} ${cp1Y}, ${toX} ${cp2Y}, ${toX} ${toY}`;
+  return `M ${fromX} ${fromY} C ${fromX} ${cp1Y}, ${toX} ${cp2Y}, ${toX} ${curveEndY} L ${toX} ${toY}`;
 }

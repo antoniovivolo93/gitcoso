@@ -1,50 +1,83 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Eye, EyeOff, GitBranch, HardDrive, RadioTower } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  GitBranch,
+  HardDrive,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RadioTower,
+  Archive,
+  Tag,
+} from "lucide-react";
 import { repoPathLabel } from "../lib/utils";
 import { useRepositoryStore } from "../store/repositoryStore";
+import { branchHiddenKey, useBranchVisibilityStore } from "../store/branchVisibilityStore";
 import { cn } from "../lib/utils";
 import type { Branch, BranchKind } from "../shared/types";
 
-const hiddenBranchesStorageKey = "branchflow.hiddenBranches";
+type SidebarProps = {
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+};
 
-export function Sidebar() {
-  const { snapshot, checkoutBranch, loading } = useRepositoryStore();
+export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
+  const { snapshot, checkoutBranch, checkoutRemoteBranch, loading } = useRepositoryStore();
+  const { hiddenBranches, setBranchHidden, setFocusedBranch } = useBranchVisibilityStore();
   const [collapsedGroups, setCollapsedGroups] = useState<Record<BranchKind, boolean>>({
     local: false,
     remote: false
   });
-  const [hiddenBranches, setHiddenBranches] = useState<Set<string>>(() => readHiddenBranches());
-  const localBranches = snapshot.branches.filter((branch) => branch.kind === "local");
-  const remoteBranches = snapshot.branches.filter((branch) => branch.kind === "remote");
+  const localBranches = getStableBranchList(snapshot.branches, "local");
+  const remoteBranches = getStableBranchList(snapshot.branches, "remote");
   const repoKey = snapshot.path ?? "no-repository";
 
   function toggleCollapsed(kind: BranchKind) {
     setCollapsedGroups((current) => ({ ...current, [kind]: !current[kind] }));
   }
 
-  function setBranchHidden(kind: BranchKind, name: string, hidden: boolean) {
-    const key = branchHiddenKey(repoKey, kind, name);
-    setHiddenBranches((current) => {
-      const next = new Set(current);
-      if (hidden) {
-        next.add(key);
-      } else {
-        next.delete(key);
-      }
-      writeHiddenBranches(next);
-      return next;
-    });
+  const localVisibleCount = countVisibleBranches(repoKey, "local", localBranches, hiddenBranches);
+  const remoteVisibleCount = countVisibleBranches(repoKey, "remote", remoteBranches, hiddenBranches);
+
+  if (collapsed) {
+    return (
+      <aside className="min-h-0 border-r border-white/[0.08] bg-surface-900/86 px-2 py-3">
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="mb-3 grid h-8 w-8 place-items-center rounded-md text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-100"
+          title="Expand sidebar"
+        >
+          <PanelLeftOpen size={15} />
+        </button>
+        <RailItem icon={HardDrive} label={snapshot.name} active={Boolean(snapshot.path)} />
+        <RailItem icon={GitBranch} label={`${localVisibleCount} local branches`} />
+        <RailItem icon={RadioTower} label={`${remoteVisibleCount} remote branches`} />
+        <RailItem icon={Archive} label="0 stashes" />
+        <RailItem icon={Tag} label="0 tags" />
+      </aside>
+    );
   }
 
   return (
-    <aside className="min-h-0 bg-surface-900/86 p-4">
-      <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3">
-        <div className="mb-2 flex items-center gap-2 text-slate-300">
+    <aside className="min-h-0 overflow-y-auto bg-surface-900/86 px-3 py-3">
+      <div className="mb-3 rounded-md border border-white/10 bg-white/[0.04] p-2.5">
+        <div className="mb-1.5 flex items-center gap-2 text-slate-300">
           <HardDrive size={15} className="text-accent-blue" />
-          <span className="text-sm font-semibold">{snapshot.name}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{snapshot.name}</span>
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="grid h-6 w-6 place-items-center rounded text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-200"
+            title="Collapse sidebar"
+          >
+            <PanelLeftClose size={14} />
+          </button>
         </div>
-        <p className="break-all text-xs leading-5 text-slate-500">{repoPathLabel(snapshot.path)}</p>
-        <span className="mt-2 inline-flex rounded-md border border-accent-blue/30 bg-accent-blue/10 px-2 py-0.5 text-[11px] text-sky-200">
+        <p className="break-all text-[11px] leading-4 text-slate-500">{repoPathLabel(snapshot.path)}</p>
+        <span className="mt-2 inline-flex rounded border border-accent-blue/30 bg-accent-blue/10 px-1.5 py-0.5 text-[10px] text-sky-200">
           {snapshot.path ? "Live Git repository" : "No folder selected"}
         </span>
       </div>
@@ -60,8 +93,10 @@ export function Sidebar() {
         hiddenBranches={hiddenBranches}
         disabled={loading || !snapshot.path}
         onToggleCollapsed={() => toggleCollapsed("local")}
-        onSetHidden={setBranchHidden}
+        onSetHidden={(kind, name, hidden) => setBranchHidden(repoKey, kind, name, hidden)}
+        onFocusBranch={setFocusedBranch}
         onCheckout={checkoutBranch}
+        onCheckoutRemote={checkoutRemoteBranch}
       />
       <BranchGroup
         title="Remote branches"
@@ -74,9 +109,13 @@ export function Sidebar() {
         hiddenBranches={hiddenBranches}
         disabled
         onToggleCollapsed={() => toggleCollapsed("remote")}
-        onSetHidden={setBranchHidden}
+        onSetHidden={(kind, name, hidden) => setBranchHidden(repoKey, kind, name, hidden)}
+        onFocusBranch={setFocusedBranch}
         onCheckout={checkoutBranch}
+        onCheckoutRemote={checkoutRemoteBranch}
       />
+      <EmptyMetaGroup title="Stashes" icon={Archive} count={0} />
+      <EmptyMetaGroup title="Tags" icon={Tag} count={0} />
     </aside>
   );
 }
@@ -93,7 +132,9 @@ type BranchGroupProps = {
   disabled?: boolean;
   onToggleCollapsed: () => void;
   onSetHidden: (kind: BranchKind, name: string, hidden: boolean) => void;
+  onFocusBranch: (name: string | null) => void;
   onCheckout: (branch: string) => Promise<void>;
+  onCheckoutRemote: (remoteBranch: string) => Promise<void>;
 };
 
 function BranchGroup({
@@ -108,23 +149,24 @@ function BranchGroup({
   disabled,
   onToggleCollapsed,
   onSetHidden,
-  onCheckout
+  onFocusBranch,
+  onCheckout,
+  onCheckoutRemote
 }: BranchGroupProps) {
   const visibleBranches = branches.filter((branch) => !hiddenBranches.has(branchHiddenKey(repoKey, kind, branch.name)));
-  const hiddenBranchList = branches.filter((branch) => hiddenBranches.has(branchHiddenKey(repoKey, kind, branch.name)));
   const CountIcon = collapsed ? ChevronRight : ChevronDown;
 
   return (
-    <section className="mt-4">
+    <section className="mt-3">
       <button
         type="button"
         onClick={onToggleCollapsed}
-        className="mb-1 flex h-7 w-full items-center gap-2 rounded-md px-1.5 text-left text-[11px] font-semibold uppercase text-slate-500 transition hover:bg-white/[0.04] hover:text-slate-300"
+        className="mb-1 flex h-6 w-full items-center gap-1.5 rounded px-1 text-left text-[10px] font-semibold uppercase text-slate-500 transition hover:bg-white/[0.04] hover:text-slate-300"
       >
-        <CountIcon size={13} />
-        <Icon size={13} />
+        <CountIcon size={12} />
+        <Icon size={12} />
         <span className="min-w-0 flex-1 truncate">{title}</span>
-        <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-slate-500">
+        <span className="rounded bg-white/[0.06] px-1 py-0.5 text-[10px] text-slate-500">
           {visibleBranches.length}
         </span>
       </button>
@@ -132,33 +174,35 @@ function BranchGroup({
       {!collapsed ? (
         <div className="space-y-0.5">
           {branches.length === 0 ? (
-            <p className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs text-slate-500">
-            Open a repository to load branches.
+            <p className="rounded border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[11px] text-slate-500">
+              Open a repository to load branches.
             </p>
           ) : null}
 
-          {visibleBranches.map((branch) => (
-            <BranchRow
-              key={branch.name}
-              branch={branch}
-              activeBranch={activeBranch}
-              disabled={disabled}
-              onCheckout={onCheckout}
-              onHide={() => onSetHidden(kind, branch.name, true)}
-            />
-          ))}
-
-          {hiddenBranchList.length > 0 ? (
-            <div className="mt-2 border-t border-white/8 pt-1">
-              {hiddenBranchList.map((branch) => (
+          {branches.map((branch) => {
+            const hidden = hiddenBranches.has(branchHiddenKey(repoKey, kind, branch.name));
+            return hidden ? (
                 <HiddenBranchRow
                   key={branch.name}
                   branch={branch}
                   onShow={() => onSetHidden(kind, branch.name, false)}
+                  onFocus={() => onFocusBranch(branch.name)}
+                  onBlur={() => onFocusBranch(null)}
                 />
-              ))}
-            </div>
-          ) : null}
+              ) : (
+                <BranchRow
+                  key={branch.name}
+                  branch={branch}
+                  activeBranch={activeBranch}
+                  disabled={disabled}
+                  onCheckout={onCheckout}
+                  onDoubleClick={kind === "remote" ? () => onCheckoutRemote(branch.name) : undefined}
+                  onHide={() => onSetHidden(kind, branch.name, true)}
+                  onFocus={() => onFocusBranch(branch.name)}
+                  onBlur={() => onFocusBranch(null)}
+                />
+              );
+          })}
         </div>
       ) : null}
     </section>
@@ -170,42 +214,52 @@ type BranchRowProps = {
   activeBranch: string;
   disabled?: boolean;
   onCheckout: (branch: string) => Promise<void>;
+  onDoubleClick?: () => void;
   onHide: () => void;
+  onFocus: () => void;
+  onBlur: () => void;
 };
 
-function BranchRow({ branch, activeBranch, disabled, onCheckout, onHide }: BranchRowProps) {
+function BranchRow({ branch, activeBranch, disabled, onCheckout, onDoubleClick, onHide, onFocus, onBlur }: BranchRowProps) {
   const active = branch.current || branch.name === activeBranch;
+  const canCheckout = !disabled && !active;
+  const remoteDoubleClickOnly = Boolean(onDoubleClick);
 
   return (
     <div
+      onMouseEnter={onFocus}
+      onMouseLeave={onBlur}
+      onDoubleClick={onDoubleClick}
       className={cn(
-        "group grid h-8 grid-cols-[minmax(0,1fr)_24px] items-center gap-1 rounded-md px-1.5 transition",
-        active ? "bg-accent-violet/14 text-violet-100" : "text-slate-400 hover:bg-white/[0.045] hover:text-slate-100",
+        "group relative grid h-6 grid-cols-[minmax(0,1fr)_22px] items-center gap-1 rounded px-1.5 transition",
+        active ? "bg-cyan-400/12 text-cyan-100" : "text-slate-400 hover:bg-white/[0.045] hover:text-slate-100",
         disabled && "opacity-75"
       )}
     >
+      {active ? <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-cyan-300" /> : null}
       <button
         type="button"
-        disabled={disabled || active}
-        onClick={() => onCheckout(branch.name)}
+        disabled={!canCheckout && !remoteDoubleClickOnly}
+        onClick={() => {
+          if (canCheckout) {
+            void onCheckout(branch.name);
+          }
+        }}
         className="min-w-0 text-left disabled:cursor-default"
-        title={branch.name}
+        title={onDoubleClick ? `${branch.name} - double click to create local tracking branch` : branch.name}
       >
-        <span className="flex min-w-0 items-center gap-1.5">
-          {active ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-green" /> : null}
-          <span className="truncate text-xs">{branch.name}</span>
+        <span className="flex min-w-0 items-center gap-1.5 pl-1">
+          <GitBranch size={11} className={cn("shrink-0", active ? "text-cyan-300" : "text-slate-600")} />
+          <span className="truncate text-[11px]">{branch.name}</span>
         </span>
-        {branch.lastCommit ? (
-          <span className="block truncate pl-3 font-mono text-[10px] text-slate-600">{branch.lastCommit}</span>
-        ) : null}
       </button>
       <button
         type="button"
         onClick={onHide}
-        className="grid h-6 w-6 place-items-center rounded text-slate-600 opacity-0 transition hover:bg-white/[0.08] hover:text-slate-300 group-hover:opacity-100"
+        className="grid h-5 w-5 place-items-center rounded text-slate-600 opacity-0 transition hover:bg-white/[0.08] hover:text-slate-300 group-hover:opacity-100"
         title="Hide branch"
       >
-        <EyeOff size={13} />
+        <EyeOff size={12} />
       </button>
     </div>
   );
@@ -214,40 +268,90 @@ function BranchRow({ branch, activeBranch, disabled, onCheckout, onHide }: Branc
 type HiddenBranchRowProps = {
   branch: Branch;
   onShow: () => void;
+  onFocus: () => void;
+  onBlur: () => void;
 };
 
-function HiddenBranchRow({ branch, onShow }: HiddenBranchRowProps) {
+function HiddenBranchRow({ branch, onShow, onFocus, onBlur }: HiddenBranchRowProps) {
   return (
-    <div className="group grid h-7 grid-cols-[minmax(0,1fr)_24px] items-center gap-1 rounded-md px-1.5 text-slate-600 transition hover:bg-white/[0.035]">
-      <span className="truncate text-xs line-through decoration-slate-600/70" title={branch.name}>
+    <div
+      onMouseEnter={onFocus}
+      onMouseLeave={onBlur}
+      className="group grid h-6 grid-cols-[minmax(0,1fr)_22px] items-center gap-1 rounded px-1.5 text-slate-600 transition hover:bg-white/[0.035]"
+    >
+      <span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] line-through decoration-slate-600/70" title={branch.name}>
+        <GitBranch size={11} className="shrink-0 text-slate-700" />
         {branch.name}
       </span>
       <button
         type="button"
         onClick={onShow}
-        className="grid h-6 w-6 place-items-center rounded text-slate-600 transition hover:bg-white/[0.08] hover:text-slate-300"
+        className="grid h-5 w-5 place-items-center rounded text-slate-600 transition hover:bg-white/[0.08] hover:text-slate-300"
         title="Show branch"
       >
-        <Eye size={13} />
+        <Eye size={12} />
       </button>
     </div>
   );
 }
 
-function branchHiddenKey(repoKey: string, kind: BranchKind, name: string) {
-  return `${repoKey}::${kind}::${name}`;
+type RailItemProps = {
+  icon: typeof GitBranch;
+  label: string;
+  active?: boolean;
+};
+
+function RailItem({ icon: Icon, label, active }: RailItemProps) {
+  return (
+    <div
+      className={cn(
+        "mb-2 grid h-8 w-8 place-items-center rounded-md text-slate-500",
+        active ? "bg-accent-blue/10 text-sky-300" : "bg-white/[0.03]"
+      )}
+      title={label}
+    >
+      <Icon size={15} />
+    </div>
+  );
 }
 
-function readHiddenBranches() {
-  try {
-    const value = window.localStorage.getItem(hiddenBranchesStorageKey);
-    const branches = value ? JSON.parse(value) : [];
-    return new Set(Array.isArray(branches) ? branches.filter((branch) => typeof branch === "string") : []);
-  } catch {
-    return new Set<string>();
-  }
+type EmptyMetaGroupProps = {
+  title: string;
+  icon: typeof GitBranch;
+  count: number;
+};
+
+function EmptyMetaGroup({ title, icon: Icon, count }: EmptyMetaGroupProps) {
+  const [collapsed, setCollapsed] = useState(true);
+  const CountIcon = collapsed ? ChevronRight : ChevronDown;
+
+  return (
+    <section className="mt-3">
+      <button
+        type="button"
+        onClick={() => setCollapsed((value) => !value)}
+        className="mb-1 flex h-6 w-full items-center gap-1.5 rounded px-1 text-left text-[10px] font-semibold uppercase text-slate-500 transition hover:bg-white/[0.04] hover:text-slate-300"
+      >
+        <CountIcon size={12} />
+        <Icon size={12} />
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        <span className="rounded bg-white/[0.06] px-1 py-0.5 text-[10px] text-slate-500">{count}</span>
+      </button>
+      {!collapsed ? (
+        <p className="rounded border border-white/10 bg-white/[0.025] px-2 py-1.5 text-[11px] text-slate-600">
+          Nessun elemento.
+        </p>
+      ) : null}
+    </section>
+  );
 }
 
-function writeHiddenBranches(branches: Set<string>) {
-  window.localStorage.setItem(hiddenBranchesStorageKey, JSON.stringify([...branches]));
+function countVisibleBranches(repoKey: string, kind: BranchKind, branches: Branch[], hiddenBranches: Set<string>) {
+  return branches.filter((branch) => !hiddenBranches.has(branchHiddenKey(repoKey, kind, branch.name))).length;
+}
+
+function getStableBranchList(branches: Branch[], kind: BranchKind) {
+  return branches
+    .filter((branch) => branch.kind === kind)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }

@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   checkoutBranch,
+  checkoutRemoteBranch,
   commitChanges,
   createBranch,
   fetchRepository,
@@ -80,6 +81,9 @@ function registerIpcHandlers() {
   );
   ipcMain.handle("branch:checkout", (_event, repoPath: string, branch: string) =>
     checkoutBranch(repoPath, branch)
+  );
+  ipcMain.handle("branch:checkout-remote", (_event, repoPath: string, remoteBranch: string) =>
+    checkoutRemoteBranch(repoPath, remoteBranch)
   );
   ipcMain.handle("branch:create", (_event, repoPath: string, name: string, checkout: boolean) =>
     createBranch(repoPath, name, checkout)

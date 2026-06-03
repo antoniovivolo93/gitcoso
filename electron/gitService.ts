@@ -108,6 +108,30 @@ export async function checkoutBranch(
   }
 }
 
+export async function checkoutRemoteBranch(
+  repoPath: string,
+  remoteBranch: string,
+): Promise<RepositorySnapshot> {
+  const repo = git(repoPath);
+  const localBranch = remoteBranch.replace(/^[^/]+\//, "");
+  const localExists = await repo
+    .raw(["rev-parse", "--verify", "--quiet", `refs/heads/${localBranch}`])
+    .then(() => true)
+    .catch(() => false);
+
+  try {
+    if (localExists) {
+      await repo.checkout(localBranch);
+    } else {
+      await repo.raw(["checkout", "--track", remoteBranch]);
+    }
+  } catch (error) {
+    throwCheckoutError(error, remoteBranch);
+  }
+
+  return getRepositorySnapshot(repoPath);
+}
+
 export async function stashAndCheckoutBranch(
   repoPath: string,
   branch: string,

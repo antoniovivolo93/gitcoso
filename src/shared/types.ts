@@ -75,6 +75,10 @@ export type BranchFlowApi = {
     repoPath: string,
     branch: string,
   ) => Promise<RepositorySnapshot>;
+  checkoutRemoteBranch: (
+    repoPath: string,
+    remoteBranch: string,
+  ) => Promise<RepositorySnapshot>;
   createBranch: (
     repoPath: string,
     name: string,
@@ -91,14 +95,13 @@ export type BranchFlowApi = {
 };
 
 export const branchColors = [
-  "#8b5cf6",
   "#38bdf8",
+  "#c084fc",
   "#34d399",
   "#fb7185",
-  "#fbbf24",
-  "#a78bfa",
+  "#f59e0b",
   "#22d3ee",
-  "#f97316",
+  "#a78bfa",
   "#4ade80",
   "#e879f9",
   "#60a5fa",
