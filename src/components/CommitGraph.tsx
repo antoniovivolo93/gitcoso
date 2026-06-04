@@ -2,15 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { FolderOpen, GitMerge } from "lucide-react";
 import { formatDate } from "../lib/utils";
-import { useRepositoryStore } from "../store/repositoryStore";
+import { buildBranchContext } from "../lib/branchContextActions";
+import { useRepositoryStore, WORKING_TREE_SELECTION } from "../store/repositoryStore";
+import { useSettingsStore } from "../store/settingsStore";
 import { branchHiddenKey, useBranchVisibilityStore } from "../store/branchVisibilityStore";
 import { cn } from "../lib/utils";
 import type { Branch, BranchKind, CommitNode } from "../shared/types";
 import { Button } from "./ui/Button";
+import type { BranchContextMenuState } from "./BranchContextMenu";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const TOP_OFFSET = 28;
+const TOP_OFFSET = 72;
 const LANE_WIDTH = 20;
 const GRAPH_LEFT = 28;
 const GRAPH_RIGHT_PADDING = 126;
@@ -26,16 +29,18 @@ const DENSITY_ROW_HEIGHTS: Record<DensityMode, number> = {
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export function CommitGraph() {
+export function CommitGraph({ onOpenBranchContextMenu }: { onOpenBranchContextMenu: (state: BranchContextMenuState) => void }) {
   const {
     snapshot,
     selectedHash,
     setSelectedCommit,
+    selectWorkingTree,
     openRepository,
     loading,
     desktopReady,
   } = useRepositoryStore();
-  const { hiddenBranches, focusedBranch } = useBranchVisibilityStore();
+  const t = useSettingsStore().t;
+  const { hiddenBranches, soloBranches, focusedBranch } = useBranchVisibilityStore();
   const [hoveredLane, setHoveredLane] = useState<number | null>(null);
   const [tooltip, setTooltip] = useState<{
     commit: Commit;
@@ -56,8 +61,13 @@ export function CommitGraph() {
     [visibleBranches],
   );
   const commits = useMemo(
-    () => filterCommitsByVisibleBranches(snapshot.commits, snapshot.branches, hiddenBranches, repoKey),
-    [snapshot.commits, snapshot.branches, hiddenBranches, repoKey],
+    () => filterCommitsBySoloBranches(
+      filterCommitsByVisibleBranches(snapshot.commits, snapshot.branches, hiddenBranches, repoKey),
+      snapshot.branches,
+      soloBranches,
+      repoKey,
+    ),
+    [snapshot.commits, snapshot.branches, hiddenBranches, soloBranches, repoKey],
   );
   const visualLaneByHash = useMemo(() => getCompactVisualLanes(snapshot.commits), [snapshot.commits]);
   const branchLane = useMemo(() => getBranchLaneMap(commits, visualLaneByHash), [commits, visualLaneByHash]);
@@ -66,6 +76,11 @@ export function CommitGraph() {
   const indexByHash = useMemo(
     () => new Map(commits.map((c, i) => [c.hash, i])),
     [commits],
+  );
+  const hasWorkingDirectoryChanges = snapshot.workingDirectoryStatus.hasUncommittedChanges;
+  const workingDirectoryAnchor = useMemo(
+    () => getWorkingDirectoryAnchor(commits, snapshot.activeBranch, visualLaneByHash),
+    [commits, snapshot.activeBranch, visualLaneByHash],
   );
   const maxVisualLane = useMemo(
     () => Math.max(0, ...commits.map((commit) => getVisualLane(commit, visualLaneByHash))),
@@ -112,6 +127,7 @@ export function CommitGraph() {
   }, [selectedHash, indexByHash, virtualizer]);
 
   useEffect(() => {
+    if (selectedHash === WORKING_TREE_SELECTION) return;
     if (!selectedHash || indexByHash.has(selectedHash) || !commits[0]) return;
     void setSelectedCommit(commits[0].hash);
   }, [commits, indexByHash, selectedHash, setSelectedCommit]);
@@ -132,16 +148,14 @@ export function CommitGraph() {
             <FolderOpen size={24} />
           </div>
           <h2 className="mb-2 text-lg font-semibold text-slate-100">
-            Open a Git repository folder
+            {t("graph.openTitle")}
           </h2>
           <p className="mb-6 text-sm leading-6 text-slate-400">
-            GitCoso will read local and remote branches, then draw the real
-            commit tree from Git history.
+            {t("graph.openDescription")}
           </p>
           {!desktopReady ? (
             <div className="mb-5 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100">
-              The folder picker is available only inside the Electron desktop
-              window. Start the app with npm run dev.
+              {t("graph.desktopOnly")}
             </div>
           ) : null}
           <Button
@@ -150,7 +164,7 @@ export function CommitGraph() {
             onClick={openRepository}
             disabled={loading || !desktopReady}
           >
-            Open repository folder
+            {t("graph.openButton")}
           </Button>
         </div>
       </div>
@@ -161,12 +175,12 @@ export function CommitGraph() {
     return (
       <div className="grid h-full place-items-center px-8 text-center">
         <div>
+          {hasWorkingDirectoryChanges ? <EmptyWorkingDirectoryNode onSelect={selectWorkingTree} /> : null}
           <h2 className="mb-2 text-lg font-semibold text-slate-100">
-            No commits found
+            {t("graph.noCommitsTitle")}
           </h2>
           <p className="text-sm text-slate-400">
-            This repository has no visible commits across local or remote
-            branches.
+            {t("graph.noCommitsDescription")}
           </p>
         </div>
       </div>
@@ -189,13 +203,13 @@ export function CommitGraph() {
           }}
         >
           <span className="flex items-center gap-2 px-4">
-            Graph
+            {t("graph.graph")}
             <DensityToggle density={density} onChange={setDensity} />
           </span>
-          <span>Description</span>
-          <span>Commit</span>
-          <span>Author</span>
-          <span className="pr-4 text-right">Date</span>
+          <span>{t("graph.description")}</span>
+          <span>{t("graph.commit")}</span>
+          <span>{t("graph.author")}</span>
+          <span className="pr-4 text-right">{t("graph.date")}</span>
         </div>
 
         {/* Virtualised Content */}
@@ -280,15 +294,55 @@ export function CommitGraph() {
               onTooltip={setTooltip}
             />
 
+            {hasWorkingDirectoryChanges && workingDirectoryAnchor ? (
+              <WorkingDirectoryNode
+                anchor={workingDirectoryAnchor}
+                rowHeight={rowHeight}
+                selected={selectedHash === WORKING_TREE_SELECTION}
+                onSelect={selectWorkingTree}
+              />
+            ) : null}
+
             {/* Branch labels */}
             <BranchLabels
+              snapshot={snapshot}
               commits={commits}
               branchKinds={branchKinds}
               visualLaneByHash={visualLaneByHash}
               graphWidth={graphWidth}
               rowHeight={rowHeight}
+              onOpenBranchContextMenu={onOpenBranchContextMenu}
             />
           </svg>
+
+          {hasWorkingDirectoryChanges && workingDirectoryAnchor ? (
+            <button
+              type="button"
+              onClick={selectWorkingTree}
+              onMouseEnter={() => setHoveredLane(workingDirectoryAnchor.lane)}
+              onMouseLeave={() => setHoveredLane(null)}
+              className={cn(
+                "absolute right-3 z-20 grid items-center gap-3 rounded-md px-3 text-left transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-cyan-300/70",
+                selectedHash === WORKING_TREE_SELECTION
+                  ? "bg-cyan-400/[0.12] text-white shadow-[inset_3px_0_0_rgba(34,211,238,0.9)]"
+                  : "text-slate-300 hover:bg-white/[0.04] hover:text-white"
+              )}
+              style={{
+                left: 0,
+                top: rowY(workingDirectoryAnchor.index, rowHeight) - rowHeight - rowHeight / 2 + 2,
+                height: rowHeight - 4,
+                gridTemplateColumns: `${Math.max(0, contentOffset - 12)}px minmax(0,1fr) 86px 118px 82px`,
+              }}
+              title="Working directory changes"
+              aria-label="Select working directory changes"
+            >
+              <span />
+              <span className="truncate text-[13px] font-semibold">Working directory changes</span>
+              <span className="font-mono text-[11px] text-slate-500">pending</span>
+              <span className="truncate text-[11px] text-slate-400">Not committed</span>
+              <span className="truncate text-right text-[11px] text-slate-500">now</span>
+            </button>
+          ) : null}
 
           {/* Row highlights (virtualised) */}
           {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -352,6 +406,18 @@ export function CommitGraph() {
                   {commit.refs.filter((ref) => isVisibleRef(ref, branchKinds)).slice(0, 1).map((ref) => (
                     <span
                       key={ref}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const context = buildBranchContext(snapshot, ref, getRefKind(ref, branchKinds), commit.hash);
+                        if (!context) return;
+                        onOpenBranchContextMenu({
+                          x: event.clientX,
+                          y: event.clientY,
+                          context,
+                          commit,
+                        });
+                      }}
                       className="max-w-28 shrink-0 truncate rounded-full border border-white/10 bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold text-cyan-100"
                     >
                       {compactRef(ref)}
@@ -473,7 +539,7 @@ function GraphLaneGuides({
         y="0"
         width={GRAPH_LEFT + (maxLane + 1) * LANE_WIDTH + GRAPH_RIGHT_PADDING}
         height="100%"
-        fill="#080b12"
+        fill="#0c1018"
       />
       {Array.from({ length: maxLane + 1 }, (_, lane) => {
         const laneCommits = commits
@@ -555,6 +621,79 @@ function GraphEdges({
         });
       })}
     </>
+  );
+}
+
+function WorkingDirectoryNode({
+  anchor,
+  rowHeight,
+  selected,
+  onSelect,
+}: {
+  anchor: { index: number; lane: number; color: string };
+  rowHeight: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const headX = laneX(anchor.lane);
+  const headY = rowY(anchor.index, rowHeight);
+  const r = NODE_RADIUS + 1.8;
+  const nodeY = headY - rowHeight;
+
+  return (
+    <g className="pointer-events-auto cursor-pointer" onClick={onSelect}>
+      <path
+        d={buildSmoothEdge(headX, nodeY, headX, headY)}
+        stroke={anchor.color}
+        strokeWidth="3"
+        fill="none"
+        strokeDasharray="3 4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity="0.78"
+      />
+      <circle
+        cx={headX}
+        cy={nodeY}
+        r={r + 5}
+        fill="none"
+        stroke={anchor.color}
+        strokeWidth={selected ? "3" : "2"}
+        strokeDasharray="4 4"
+        opacity={selected ? "0.78" : "0.5"}
+        className="animate-pulse-subtle"
+      />
+      <circle
+        cx={headX}
+        cy={nodeY}
+        r={r}
+        fill="#111827"
+        stroke={anchor.color}
+        strokeWidth={selected ? "3.2" : "2.8"}
+        strokeDasharray="4 3"
+        filter={selected ? "url(#node-glow)" : "url(#node-shadow)"}
+        opacity="0.98"
+      />
+      <circle
+        cx={headX}
+        cy={nodeY}
+        r={Math.max(1, r - 4.2)}
+        fill={`url(#node-gradient-${anchor.lane % 12})`}
+        stroke={anchor.color}
+        strokeWidth="1"
+        strokeDasharray="3 3"
+        opacity="0.95"
+      />
+      <circle
+        cx={headX + r - 2.2}
+        cy={nodeY + r - 2.2}
+        r="2.6"
+        fill="#f8fafc"
+        stroke={anchor.color}
+        strokeWidth="1"
+        opacity="0.95"
+      />
+    </g>
   );
 }
 
@@ -668,18 +807,36 @@ function GraphNodes({
   );
 }
 
+function EmptyWorkingDirectoryNode({ onSelect }: { onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full border-[3px] border-dashed border-cyan-300/80 bg-[#111827] shadow-[0_10px_30px_rgba(34,211,238,0.12)] transition hover:border-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/70"
+      title="Working directory changes"
+      aria-label="Select working directory changes"
+    >
+      <span className="h-5 w-5 rounded-full border border-dashed border-cyan-200/80 bg-cyan-400/20" />
+    </button>
+  );
+}
+
 function BranchLabels({
+  snapshot,
   commits,
   branchKinds,
   visualLaneByHash,
   graphWidth,
   rowHeight,
+  onOpenBranchContextMenu,
 }: {
+  snapshot: ReturnType<typeof useRepositoryStore.getState>["snapshot"];
   commits: Commit[];
   branchKinds: Map<string, BranchKind>;
   visualLaneByHash: Map<string, number>;
   graphWidth: number;
   rowHeight: number;
+  onOpenBranchContextMenu: (state: BranchContextMenuState) => void;
 }) {
   const seenKeys = new Set<string>();
 
@@ -707,7 +864,19 @@ function BranchLabels({
           return (
             <g
               key={`${commit.hash}-${tag.displayName}`}
-              className="pointer-events-none"
+              className="pointer-events-auto cursor-context-menu"
+              onContextMenu={(event) => {
+                event.preventDefault();
+                const ref = chooseBranchRef(tag);
+                const context = buildBranchContext(snapshot, ref, getRefKind(ref, branchKinds), commit.hash);
+                if (!context) return;
+                onOpenBranchContextMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                  context,
+                  commit,
+                });
+              }}
             >
               <rect
                 x={x}
@@ -859,6 +1028,10 @@ function groupBranchTags(
   );
 }
 
+function chooseBranchRef(tag: BranchTag) {
+  return tag.refs.find((ref) => !ref.includes("/")) ?? tag.refs[0];
+}
+
 type LaneInterval = {
   lane: number;
   start: number;
@@ -924,6 +1097,25 @@ function getVisualLane(commit: CommitNode, visualLaneByHash: Map<string, number>
   return visualLaneByHash.get(commit.hash) ?? 0;
 }
 
+function getWorkingDirectoryAnchor(
+  commits: Commit[],
+  activeBranch: string,
+  visualLaneByHash: Map<string, number>,
+) {
+  const index = activeBranch
+    ? commits.findIndex((commit) => commit.refs.includes(activeBranch))
+    : 0;
+  const resolvedIndex = index === -1 ? 0 : index;
+  const commit = commits[resolvedIndex];
+  if (!commit) return null;
+  const lane = getVisualLane(commit, visualLaneByHash);
+  return {
+    index: resolvedIndex,
+    lane,
+    color: commit.color || laneColor(lane),
+  };
+}
+
 function getBranchLaneMap(commits: CommitNode[], visualLaneByHash: Map<string, number>) {
   const branchLane = new Map<string, number>();
   commits.forEach((commit) => {
@@ -964,6 +1156,25 @@ function filterCommitsByVisibleBranches(
   const visibleReachable = collectReachableCommits(visibleTips, byHash);
 
   return commits.filter((commit) => !hiddenReachable.has(commit.hash) || visibleReachable.has(commit.hash));
+}
+
+function filterCommitsBySoloBranches(
+  commits: CommitNode[],
+  branches: Branch[],
+  soloBranches: Set<string>,
+  repoKey: string,
+) {
+  if (!soloBranches.size) return commits;
+  const soloBranchNames = new Set(
+    branches
+      .filter((branch) => soloBranches.has(branchHiddenKey(repoKey, branch.kind, branch.name)))
+      .map((branch) => branch.name),
+  );
+  if (!soloBranchNames.size) return commits;
+  const soloTips = getBranchTipHashes(commits, branches, soloBranchNames);
+  const byHash = new Map(commits.map((commit) => [commit.hash, commit]));
+  const reachable = collectReachableCommits(soloTips, byHash);
+  return commits.filter((commit) => reachable.has(commit.hash));
 }
 
 function getBranchTipHashes(

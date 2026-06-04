@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -13,26 +13,42 @@ import {
   Tag,
 } from "lucide-react";
 import { repoPathLabel } from "../lib/utils";
+import { buildBranchContext } from "../lib/branchContextActions";
 import { useRepositoryStore } from "../store/repositoryStore";
+import { useSettingsStore } from "../store/settingsStore";
 import { branchHiddenKey, useBranchVisibilityStore } from "../store/branchVisibilityStore";
 import { cn } from "../lib/utils";
 import type { Branch, BranchKind } from "../shared/types";
+import type { BranchContextMenuState } from "./BranchContextMenu";
 
 type SidebarProps = {
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  onOpenBranchContextMenu: (state: BranchContextMenuState) => void;
 };
 
-export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
+export function Sidebar({ collapsed, onToggleCollapsed, onOpenBranchContextMenu }: SidebarProps) {
   const { snapshot, checkoutBranch, checkoutRemoteBranch, loading } = useRepositoryStore();
-  const { hiddenBranches, setBranchHidden, setFocusedBranch } = useBranchVisibilityStore();
+  const t = useSettingsStore().t;
+  const { hiddenBranches, pinnedBranches, setBranchHidden, setFocusedBranch } = useBranchVisibilityStore();
   const [collapsedGroups, setCollapsedGroups] = useState<Record<BranchKind, boolean>>({
     local: false,
     remote: false
   });
-  const localBranches = getStableBranchList(snapshot.branches, "local");
-  const remoteBranches = getStableBranchList(snapshot.branches, "remote");
   const repoKey = snapshot.path ?? "no-repository";
+  const localBranches = getStableBranchList(snapshot.branches, "local", repoKey, pinnedBranches);
+  const remoteBranches = getStableBranchList(snapshot.branches, "remote", repoKey, pinnedBranches);
+
+  function openBranchContextMenu(event: MouseEvent, branch: Branch) {
+    event.preventDefault();
+    const context = buildBranchContext(snapshot, branch.name, branch.kind, branch.lastCommit);
+    if (!context) return;
+    onOpenBranchContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      context,
+    });
+  }
 
   function toggleCollapsed(kind: BranchKind) {
     setCollapsedGroups((current) => ({ ...current, [kind]: !current[kind] }));
@@ -48,15 +64,15 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
           type="button"
           onClick={onToggleCollapsed}
           className="mb-3 grid h-8 w-8 place-items-center rounded-md text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-100"
-          title="Expand sidebar"
+          title={t("sidebar.expand")}
         >
           <PanelLeftOpen size={15} />
         </button>
         <RailItem icon={HardDrive} label={snapshot.name} active={Boolean(snapshot.path)} />
-        <RailItem icon={GitBranch} label={`${localVisibleCount} local branches`} />
-        <RailItem icon={RadioTower} label={`${remoteVisibleCount} remote branches`} />
-        <RailItem icon={Archive} label="0 stashes" />
-        <RailItem icon={Tag} label="0 tags" />
+        <RailItem icon={GitBranch} label={`${localVisibleCount} ${t("sidebar.localBranches")}`} />
+        <RailItem icon={RadioTower} label={`${remoteVisibleCount} ${t("sidebar.remoteBranches")}`} />
+        <RailItem icon={Archive} label={`0 ${t("sidebar.stashes")}`} />
+        <RailItem icon={Tag} label={`0 ${t("sidebar.tags")}`} />
       </aside>
     );
   }
@@ -71,19 +87,19 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             type="button"
             onClick={onToggleCollapsed}
             className="grid h-6 w-6 place-items-center rounded text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-200"
-            title="Collapse sidebar"
+            title={t("sidebar.collapse")}
           >
             <PanelLeftClose size={14} />
           </button>
         </div>
         <p className="break-all text-[11px] leading-4 text-slate-500">{repoPathLabel(snapshot.path)}</p>
         <span className="mt-2 inline-flex rounded border border-accent-blue/30 bg-accent-blue/10 px-1.5 py-0.5 text-[10px] text-sky-200">
-          {snapshot.path ? "Live Git repository" : "No folder selected"}
+          {snapshot.path ? t("sidebar.liveRepository") : t("sidebar.noFolder")}
         </span>
       </div>
 
       <BranchGroup
-        title="Local branches"
+        title={t("sidebar.localBranches")}
         icon={GitBranch}
         kind="local"
         repoKey={repoKey}
@@ -97,9 +113,10 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
         onFocusBranch={setFocusedBranch}
         onCheckout={checkoutBranch}
         onCheckoutRemote={checkoutRemoteBranch}
+        onOpenContextMenu={openBranchContextMenu}
       />
       <BranchGroup
-        title="Remote branches"
+        title={t("sidebar.remoteBranches")}
         icon={RadioTower}
         kind="remote"
         repoKey={repoKey}
@@ -113,9 +130,10 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
         onFocusBranch={setFocusedBranch}
         onCheckout={checkoutBranch}
         onCheckoutRemote={checkoutRemoteBranch}
+        onOpenContextMenu={openBranchContextMenu}
       />
-      <EmptyMetaGroup title="Stashes" icon={Archive} count={0} />
-      <EmptyMetaGroup title="Tags" icon={Tag} count={0} />
+      <EmptyMetaGroup title={t("sidebar.stashes")} icon={Archive} count={0} />
+      <EmptyMetaGroup title={t("sidebar.tags")} icon={Tag} count={0} />
     </aside>
   );
 }
@@ -135,6 +153,7 @@ type BranchGroupProps = {
   onFocusBranch: (name: string | null) => void;
   onCheckout: (branch: string) => Promise<void>;
   onCheckoutRemote: (remoteBranch: string) => Promise<void>;
+  onOpenContextMenu: (event: MouseEvent, branch: Branch) => void;
 };
 
 function BranchGroup({
@@ -151,10 +170,12 @@ function BranchGroup({
   onSetHidden,
   onFocusBranch,
   onCheckout,
-  onCheckoutRemote
+  onCheckoutRemote,
+  onOpenContextMenu
 }: BranchGroupProps) {
   const visibleBranches = branches.filter((branch) => !hiddenBranches.has(branchHiddenKey(repoKey, kind, branch.name)));
   const CountIcon = collapsed ? ChevronRight : ChevronDown;
+  const t = useSettingsStore().t;
 
   return (
     <section className="mt-3">
@@ -175,7 +196,7 @@ function BranchGroup({
         <div className="space-y-0.5">
           {branches.length === 0 ? (
             <p className="rounded border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[11px] text-slate-500">
-              Open a repository to load branches.
+              {t("sidebar.openToLoad")}
             </p>
           ) : null}
 
@@ -188,6 +209,7 @@ function BranchGroup({
                   onShow={() => onSetHidden(kind, branch.name, false)}
                   onFocus={() => onFocusBranch(branch.name)}
                   onBlur={() => onFocusBranch(null)}
+                  onContextMenu={(event) => onOpenContextMenu(event, branch)}
                 />
               ) : (
                 <BranchRow
@@ -200,6 +222,7 @@ function BranchGroup({
                   onHide={() => onSetHidden(kind, branch.name, true)}
                   onFocus={() => onFocusBranch(branch.name)}
                   onBlur={() => onFocusBranch(null)}
+                  onContextMenu={(event) => onOpenContextMenu(event, branch)}
                 />
               );
           })}
@@ -218,9 +241,11 @@ type BranchRowProps = {
   onHide: () => void;
   onFocus: () => void;
   onBlur: () => void;
+  onContextMenu: (event: MouseEvent) => void;
 };
 
-function BranchRow({ branch, activeBranch, disabled, onCheckout, onDoubleClick, onHide, onFocus, onBlur }: BranchRowProps) {
+function BranchRow({ branch, activeBranch, disabled, onCheckout, onDoubleClick, onHide, onFocus, onBlur, onContextMenu }: BranchRowProps) {
+  const t = useSettingsStore().t;
   const active = branch.current || branch.name === activeBranch;
   const canCheckout = !disabled && !active;
   const remoteDoubleClickOnly = Boolean(onDoubleClick);
@@ -230,6 +255,7 @@ function BranchRow({ branch, activeBranch, disabled, onCheckout, onDoubleClick, 
       onMouseEnter={onFocus}
       onMouseLeave={onBlur}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       className={cn(
         "group relative grid h-6 grid-cols-[minmax(0,1fr)_22px] items-center gap-1 rounded px-1.5 transition",
         active ? "bg-cyan-400/12 text-cyan-100" : "text-slate-400 hover:bg-white/[0.045] hover:text-slate-100",
@@ -257,7 +283,7 @@ function BranchRow({ branch, activeBranch, disabled, onCheckout, onDoubleClick, 
         type="button"
         onClick={onHide}
         className="grid h-5 w-5 place-items-center rounded text-slate-600 opacity-0 transition hover:bg-white/[0.08] hover:text-slate-300 group-hover:opacity-100"
-        title="Hide branch"
+        title={t("branch.hide")}
       >
         <EyeOff size={12} />
       </button>
@@ -270,13 +296,16 @@ type HiddenBranchRowProps = {
   onShow: () => void;
   onFocus: () => void;
   onBlur: () => void;
+  onContextMenu: (event: MouseEvent) => void;
 };
 
-function HiddenBranchRow({ branch, onShow, onFocus, onBlur }: HiddenBranchRowProps) {
+function HiddenBranchRow({ branch, onShow, onFocus, onBlur, onContextMenu }: HiddenBranchRowProps) {
+  const t = useSettingsStore().t;
   return (
     <div
       onMouseEnter={onFocus}
       onMouseLeave={onBlur}
+      onContextMenu={onContextMenu}
       className="group grid h-6 grid-cols-[minmax(0,1fr)_22px] items-center gap-1 rounded px-1.5 text-slate-600 transition hover:bg-white/[0.035]"
     >
       <span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] line-through decoration-slate-600/70" title={branch.name}>
@@ -287,7 +316,7 @@ function HiddenBranchRow({ branch, onShow, onFocus, onBlur }: HiddenBranchRowPro
         type="button"
         onClick={onShow}
         className="grid h-5 w-5 place-items-center rounded text-slate-600 transition hover:bg-white/[0.08] hover:text-slate-300"
-        title="Show branch"
+        title={t("branch.show")}
       >
         <Eye size={12} />
       </button>
@@ -323,6 +352,7 @@ type EmptyMetaGroupProps = {
 
 function EmptyMetaGroup({ title, icon: Icon, count }: EmptyMetaGroupProps) {
   const [collapsed, setCollapsed] = useState(true);
+  const t = useSettingsStore().t;
   const CountIcon = collapsed ? ChevronRight : ChevronDown;
 
   return (
@@ -339,7 +369,7 @@ function EmptyMetaGroup({ title, icon: Icon, count }: EmptyMetaGroupProps) {
       </button>
       {!collapsed ? (
         <p className="rounded border border-white/10 bg-white/[0.025] px-2 py-1.5 text-[11px] text-slate-600">
-          Nessun elemento.
+          {t("sidebar.noItems")}
         </p>
       ) : null}
     </section>
@@ -350,8 +380,12 @@ function countVisibleBranches(repoKey: string, kind: BranchKind, branches: Branc
   return branches.filter((branch) => !hiddenBranches.has(branchHiddenKey(repoKey, kind, branch.name))).length;
 }
 
-function getStableBranchList(branches: Branch[], kind: BranchKind) {
+function getStableBranchList(branches: Branch[], kind: BranchKind, repoKey: string, pinnedBranches: Set<string>) {
   return branches
     .filter((branch) => branch.kind === kind)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    .sort((a, b) => {
+      const aPinned = pinnedBranches.has(branchHiddenKey(repoKey, kind, a.name));
+      const bPinned = pinnedBranches.has(branchHiddenKey(repoKey, kind, b.name));
+      return Number(bPinned) - Number(aPinned) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    });
 }

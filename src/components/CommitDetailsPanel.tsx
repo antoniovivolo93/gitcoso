@@ -1,8 +1,7 @@
-import { CheckCircle2, File, FileCode2, Folder, GitCommitHorizontal, Layers3, MoreVertical, Plus } from "lucide-react";
+import { File, FileCode2, Folder, MoreVertical } from "lucide-react";
 import { formatDate } from "../lib/utils";
 import { useRepositoryStore } from "../store/repositoryStore";
 import { cn } from "../lib/utils";
-import { Button } from "./ui/Button";
 import type { ChangedFile } from "../shared/types";
 
 const statusLabel = {
@@ -21,19 +20,9 @@ export function CommitDetailsPanel() {
   return (
     <aside className="flex min-h-0 flex-col border-l border-white/[0.08] bg-[#111722]">
       <div className="min-h-0 flex-1 overflow-auto p-4">
-        <section className="mb-4 rounded-md border border-white/[0.08] bg-[#0c111a] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-          <PanelHeader icon={Layers3} title="Unstaged Files" count={files.length} />
-          <FileTree files={files} emptyText="Nessuna modifica unstaged rilevata." />
-        </section>
-
-        <section className="mb-5 rounded-md border border-white/[0.08] bg-[#0c111a] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-          <PanelHeader icon={CheckCircle2} title="Staged Files" count={0} />
-          <FileTree files={[]} emptyText="Nessun file staged." />
-        </section>
-
         {!selectedDetails ? (
           <div className="rounded-md border border-white/10 bg-white/[0.04] p-4 text-sm text-slate-400">
-            Select a commit to inspect its files and summary diff.
+            Select a commit to inspect the changes introduced by it, or select the dashed working-directory node to prepare a commit.
           </div>
         ) : (
           <div className="space-y-4">
@@ -66,20 +55,10 @@ export function CommitDetailsPanel() {
               <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase text-slate-400">
                 <span className="flex items-center gap-2">
                   <FileCode2 size={14} />
-                  Changed files ({selectedDetails.files.length})
+                  Commit changes ({selectedDetails.files.length})
                 </span>
               </div>
-              <div className="space-y-1">
-                {selectedDetails.files.length === 0 ? (
-                  <p className="rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-500">
-                    No file list available for this commit.
-                  </p>
-                ) : (
-                  selectedDetails.files.map((file) => (
-                    <FileChangeRow key={`${file.status}-${file.path}`} file={file} />
-                  ))
-                )}
-              </div>
+              <FileTree files={files} emptyText="No file list available for this commit." />
             </section>
 
             <section>
@@ -91,25 +70,7 @@ export function CommitDetailsPanel() {
           </div>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-2 border-t border-white/[0.08] bg-[#0c111a]/95 p-3">
-        <Button icon={Plus} className="h-9 justify-center border-cyan-300/20 bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/16">
-          Stage All Changes
-        </Button>
-        <Button icon={GitCommitHorizontal} variant="primary" className="h-9 justify-center bg-cyan-500 hover:bg-cyan-400">
-          Commit
-        </Button>
-      </div>
     </aside>
-  );
-}
-
-function PanelHeader({ icon: Icon, title, count }: { icon: typeof Layers3; title: string; count: number }) {
-  return (
-    <div className="flex h-9 items-center gap-2 border-b border-white/[0.06] px-3 text-[11px] font-semibold uppercase text-slate-400">
-      <Icon size={14} className="text-cyan-300/80" />
-      <span className="min-w-0 flex-1 truncate">{title}</span>
-      <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-slate-500">{count}</span>
-    </div>
   );
 }
 

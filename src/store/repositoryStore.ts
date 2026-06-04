@@ -1,6 +1,8 @@
 import { create } from "zustand";
-import type { CheckoutBlockedError, CommitDetails, CommitNode, RepositorySnapshot } from "../shared/types";
+import type { CheckoutBlockedError, CommitDetails, CommitNode, CommitOptions, RepositorySnapshot } from "../shared/types";
 import { emptySnapshot } from "../shared/initialState";
+
+export const WORKING_TREE_SELECTION = "__gitcoso_working_tree__";
 
 type ToastState = {
   id: number;
@@ -30,11 +32,14 @@ type RepositoryState = {
   desktopReady: boolean;
   syncDesktopBridge: () => void;
   clearToast: () => void;
+  notify: (type: ToastState["type"], message: string) => void;
   clearCommandLogs: () => void;
   clearCheckoutBlocked: () => void;
+  applySnapshot: (snapshot: RepositorySnapshot) => Promise<void>;
   setActiveRepository: (repoPath: string) => Promise<void>;
   closeRepository: (repoPath: string) => void;
   setSelectedCommit: (hash: string) => Promise<void>;
+  selectWorkingTree: () => void;
   openRepository: () => Promise<void>;
   refresh: () => Promise<void>;
   checkoutBranch: (branch: string) => Promise<void>;
@@ -42,6 +47,16 @@ type RepositoryState = {
   stashAndCheckout: () => Promise<void>;
   createBranch: (name: string, checkout: boolean) => Promise<void>;
   commit: (message: string) => Promise<void>;
+  stageFile: (filePath: string) => Promise<void>;
+  stageFolder: (folderPath: string) => Promise<void>;
+  stageAll: () => Promise<void>;
+  unstageFile: (filePath: string) => Promise<void>;
+  unstageFolder: (folderPath: string) => Promise<void>;
+  unstageAll: () => Promise<void>;
+  discardFile: (filePath: string) => Promise<void>;
+  commitAdvanced: (summary: string, description: string, amend: boolean, options: Partial<CommitOptions>) => Promise<void>;
+  showFileDiff: (filePath: string, staged: boolean) => Promise<void>;
+  openFile: (filePath: string) => Promise<void>;
   fetch: () => Promise<void>;
   pull: () => Promise<void>;
   push: () => Promise<void>;
@@ -79,12 +94,42 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
     set({ toast: null });
   },
 
+  notify: (type, message) => {
+    setToast(set, type, message);
+  },
+
   clearCommandLogs: () => {
     set({ commandLogs: [] });
   },
 
   clearCheckoutBlocked: () => {
     set({ checkoutBlocked: null });
+  },
+
+  applySnapshot: async (snapshot) => {
+    const current = get();
+    const { selectedHash, selectedDetails } = await resolveSnapshotSelection(snapshot, current.selectedHash);
+    set((state) => {
+      if (!snapshot.path) {
+        return { snapshot, selectedHash, selectedDetails };
+      }
+      const repositories = upsertWorkspace(state.repositories, {
+        path: snapshot.path,
+        snapshot,
+        selectedHash,
+        selectedDetails,
+      });
+      const shouldActivate = state.activeRepositoryPath === snapshot.path || !state.activeRepositoryPath;
+      return {
+        repositories,
+        activeRepositoryPath: shouldActivate ? snapshot.path : state.activeRepositoryPath,
+        snapshot: shouldActivate ? snapshot : state.snapshot,
+        selectedHash: shouldActivate ? selectedHash : state.selectedHash,
+        selectedDetails: shouldActivate ? selectedDetails : state.selectedDetails,
+        checkoutBlocked: null,
+        error: null,
+      };
+    });
   },
 
   setActiveRepository: async (repoPath) => {
@@ -101,7 +146,7 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
       error: null,
     });
 
-    if (selectedHash && !workspace.selectedDetails) {
+    if (selectedHash && selectedHash !== WORKING_TREE_SELECTION && !workspace.selectedDetails) {
       await get().setSelectedCommit(selectedHash);
     }
   },
@@ -127,6 +172,10 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
   },
 
   setSelectedCommit: async (hash) => {
+    if (hash === WORKING_TREE_SELECTION) {
+      get().selectWorkingTree();
+      return;
+    }
     const { snapshot } = get();
     const commandId = startCommand(set, `git show ${hash.slice(0, 7)}`);
     set({ selectedHash: hash, loading: true, error: null });
@@ -144,6 +193,17 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
     } finally {
       set({ loading: false });
     }
+  },
+
+  selectWorkingTree: () => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    set((state) => ({
+      selectedHash: WORKING_TREE_SELECTION,
+      selectedDetails: null,
+      repositories: updateWorkspaceSelection(state.repositories, snapshot.path, WORKING_TREE_SELECTION, null),
+      error: null,
+    }));
   },
 
   openRepository: async () => {
@@ -209,6 +269,107 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
     await runSnapshotAction(set, async () => getDesktopApi().commit(snapshot.path!, message), undefined, "git commit");
   },
 
+  stageFile: async (filePath) => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    await runSnapshotAction(set, async () => getDesktopApi().stageFile(snapshot.path!, filePath), undefined, `git add -- ${filePath}`);
+  },
+
+  stageFolder: async (folderPath) => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    await runSnapshotAction(set, async () => getDesktopApi().stageFolder(snapshot.path!, folderPath), undefined, `git add -- ${folderPath}`);
+  },
+
+  stageAll: async () => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    await runSnapshotAction(set, async () => getDesktopApi().stageAll(snapshot.path!), undefined, "git add -A");
+  },
+
+  unstageFile: async (filePath) => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    await runSnapshotAction(set, async () => getDesktopApi().unstageFile(snapshot.path!, filePath), undefined, `git restore --staged -- ${filePath}`);
+  },
+
+  unstageFolder: async (folderPath) => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    await runSnapshotAction(set, async () => getDesktopApi().unstageFolder(snapshot.path!, folderPath), undefined, `git restore --staged -- ${folderPath}`);
+  },
+
+  unstageAll: async () => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    await runSnapshotAction(set, async () => getDesktopApi().unstageAll(snapshot.path!), undefined, "git restore --staged .");
+  },
+
+  discardFile: async (filePath) => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    await runSnapshotAction(set, async () => getDesktopApi().discardFile(snapshot.path!, filePath), undefined, `git restore -- ${filePath}`);
+  },
+
+  commitAdvanced: async (summary, description, amend, options) => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    const command = [
+      "git commit",
+      amend ? "--amend" : "",
+      options.signOff ? "--signoff" : "",
+      options.allowEmpty ? "--allow-empty" : "",
+      options.noVerify ? "--no-verify" : "",
+    ].filter(Boolean).join(" ");
+    const nextSnapshot = await runSnapshotAction(
+      set,
+      async () => getDesktopApi().commitAdvanced({
+        repoPath: snapshot.path!,
+        summary,
+        description,
+        amend,
+        options,
+      }),
+      undefined,
+      command
+    );
+    if (nextSnapshot) {
+      setToast(set, "success", amend ? "Commit amended." : "Commit created.");
+    }
+  },
+
+  showFileDiff: async (filePath, staged) => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    const commandId = startCommand(set, staged ? `git diff --cached -- ${filePath}` : `git diff -- ${filePath}`);
+    set({ loading: true, error: null });
+    try {
+      const diff = await getDesktopApi().getFileDiff(snapshot.path, filePath, staged);
+      setToast(set, "info", diff.trim() ? diff.slice(0, 280) : "No diff available for this file.");
+      finishCommand(set, commandId, "success");
+    } catch (error) {
+      const message = getError(error);
+      setErrorState(set, message);
+      finishCommand(set, commandId, "error", message);
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  openFile: async (filePath) => {
+    const { snapshot } = get();
+    if (!snapshot.path) return;
+    const commandId = startCommand(set, `open ${filePath}`);
+    try {
+      await getDesktopApi().openFile(snapshot.path, filePath);
+      finishCommand(set, commandId, "success");
+    } catch (error) {
+      const message = getError(error);
+      setErrorState(set, message);
+      finishCommand(set, commandId, "error", message);
+    }
+  },
+
   fetch: async () => {
     const { snapshot } = get();
     if (!snapshot.path) return;
@@ -253,10 +414,8 @@ async function runSnapshotAction(
   set({ loading: true, error: null });
   try {
     const snapshot = await action();
-    const selectedHash = snapshot.commits[0]?.hash ?? "";
-    const selectedDetails = selectedHash
-      ? await getDesktopApi().getCommitDetails(snapshot.path, selectedHash)
-      : null;
+    const previousHash = useRepositoryStore.getState().selectedHash;
+    const { selectedHash, selectedDetails } = await resolveSnapshotSelection(snapshot, previousHash);
     if (!snapshot.path) {
       if (commandId !== null) {
         finishCommand(set, commandId, "success");
@@ -320,7 +479,7 @@ function updateWorkspaceSelection(
   repositories: RepositoryWorkspace[],
   repoPath: string | null,
   selectedHash: string,
-  selectedDetails: CommitDetails,
+  selectedDetails: CommitDetails | null,
 ) {
   if (!repoPath) {
     return repositories;
@@ -330,6 +489,31 @@ function updateWorkspaceSelection(
     ? { ...repo, selectedHash, selectedDetails }
     : repo
   );
+}
+
+async function resolveSnapshotSelection(
+  snapshot: RepositorySnapshot,
+  preferredHash?: string,
+): Promise<{ selectedHash: string; selectedDetails: CommitDetails | null }> {
+  if (!snapshot.path) {
+    return { selectedHash: "", selectedDetails: null };
+  }
+
+  if (
+    preferredHash === WORKING_TREE_SELECTION
+    && snapshot.workingDirectoryStatus.hasUncommittedChanges
+  ) {
+    return { selectedHash: WORKING_TREE_SELECTION, selectedDetails: null };
+  }
+
+  const selectedHash = preferredHash && snapshot.commits.some((commit) => commit.hash === preferredHash)
+    ? preferredHash
+    : snapshot.commits[0]?.hash ?? "";
+  const selectedDetails = selectedHash
+    ? await getDesktopApi().getCommitDetails(snapshot.path, selectedHash)
+    : null;
+
+  return { selectedHash, selectedDetails };
 }
 
 function startCommand(
@@ -404,9 +588,21 @@ function countPulledCommits(commits: CommitNode[], beforeHead: string, afterHead
 function getError(error: unknown): string {
   if (error instanceof Error) {
     const parsed = tryParseJsonError(error.message);
-    return typeof parsed?.message === "string" ? parsed.message : error.message;
+    const message = typeof parsed?.message === "string" ? parsed.message : error.message;
+    return normalizeErrorMessage(message);
   }
   return "Unexpected operation failure";
+}
+
+function normalizeErrorMessage(message: string) {
+  if (
+    message.includes("Selected folder is not a Git repository")
+    || message.includes("git non inizializzato")
+  ) {
+    return "git non inizializzato";
+  }
+
+  return message;
 }
 
 function parseCheckoutBlockedError(error: unknown, branch?: string): CheckoutBlockedError | null {
