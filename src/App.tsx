@@ -23,15 +23,35 @@ import { CheckoutBlockedDialog } from "./components/dialogs/CheckoutBlockedDialo
 import { CreateBranchDialog } from "./components/dialogs/CreateBranchDialog";
 import { CommitDialog } from "./components/dialogs/CommitDialog";
 import { Button } from "./components/ui/Button";
+import { cn, repoPathLabel } from "./lib/utils";
 import { useRepositoryStore } from "./store/repositoryStore";
-import type { CommandLogEntry } from "./store/repositoryStore";
+import type { CommandLogEntry, RepositoryWorkspace } from "./store/repositoryStore";
 
 export default function App() {
   const [branchDialogOpen, setBranchDialogOpen] = useState(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(true);
-  const { snapshot, loading, error, toast, commandLogs, desktopReady, syncDesktopBridge, clearToast, clearCommandLogs, openRepository, refresh, fetch, pull, push } = useRepositoryStore();
+  const {
+    repositories,
+    activeRepositoryPath,
+    snapshot,
+    loading,
+    error,
+    toast,
+    commandLogs,
+    desktopReady,
+    syncDesktopBridge,
+    clearToast,
+    clearCommandLogs,
+    openRepository,
+    refresh,
+    fetch,
+    pull,
+    push,
+    setActiveRepository,
+    closeRepository,
+  } = useRepositoryStore();
   const gitActionsDisabled = loading || !snapshot.path;
 
   useEffect(() => {
@@ -52,46 +72,57 @@ export default function App() {
       <div
         className="relative grid h-full"
         style={{
-          gridTemplateRows: terminalOpen ? "64px minmax(0,1fr) 260px" : "64px minmax(0,1fr)",
+          gridTemplateRows: terminalOpen ? "104px minmax(0,1fr) 260px" : "104px minmax(0,1fr)",
         }}
       >
-        <header className="drag-region flex items-center justify-between border-b border-white/10 bg-surface-900/92 px-5 backdrop-blur-xl">
-          <div className="flex items-center gap-3">
-            <div className="no-drag flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br from-accent-violet to-accent-blue shadow-glow">
-              <GitCommitHorizontal size={20} />
+        <header className="drag-region flex min-h-0 flex-col border-b border-white/10 bg-surface-900/92 backdrop-blur-xl">
+          <div className="flex h-16 items-center justify-between px-5">
+            <div className="titlebar-safe-area flex min-w-0 items-center gap-3">
+              <div className="no-drag flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br from-accent-violet to-accent-blue shadow-glow">
+                <GitCommitHorizontal size={20} />
+              </div>
+              <div>
+                <h1 className="text-base font-semibold tracking-wide">GitCoso</h1>
+                <p className="text-xs text-slate-400">{snapshot.statusSummary}</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-base font-semibold tracking-wide">BranchFlow</h1>
-              <p className="text-xs text-slate-400">{snapshot.statusSummary}</p>
-            </div>
-          </div>
 
-          <nav className="no-drag flex items-center gap-2">
-            <Button icon={FolderOpen} onClick={openRepository} disabled={loading || !desktopReady}>
-              Open
-            </Button>
-            <Button icon={RefreshCw} onClick={refresh} disabled={gitActionsDisabled}>
-              Refresh
-            </Button>
-            <Button icon={Download} onClick={fetch} disabled={gitActionsDisabled}>
-              Fetch
-            </Button>
-            <Button icon={GitPullRequestArrow} onClick={pull} disabled={gitActionsDisabled}>
-              Pull
-            </Button>
-            <Button icon={Upload} onClick={push} disabled={gitActionsDisabled}>
-              Push
-            </Button>
-            <Button icon={Plus} onClick={() => setBranchDialogOpen(true)} disabled={gitActionsDisabled}>
-              Branch
-            </Button>
-            <Button icon={Check} variant="primary" onClick={() => setCommitDialogOpen(true)} disabled={gitActionsDisabled}>
-              Commit
-            </Button>
-            <Button icon={terminalOpen ? ChevronDown : ChevronUp} onClick={() => setTerminalOpen((value) => !value)}>
-              Terminal
-            </Button>
-          </nav>
+            <nav className="no-drag flex items-center gap-2">
+              <Button icon={FolderOpen} onClick={openRepository} disabled={loading || !desktopReady}>
+                Open
+              </Button>
+              <Button icon={RefreshCw} onClick={refresh} disabled={gitActionsDisabled}>
+                Refresh
+              </Button>
+              <Button icon={Download} onClick={fetch} disabled={gitActionsDisabled}>
+                Fetch
+              </Button>
+              <Button icon={GitPullRequestArrow} onClick={pull} disabled={gitActionsDisabled}>
+                Pull
+              </Button>
+              <Button icon={Upload} onClick={push} disabled={gitActionsDisabled}>
+                Push
+              </Button>
+              <Button icon={Plus} onClick={() => setBranchDialogOpen(true)} disabled={gitActionsDisabled}>
+                Branch
+              </Button>
+              <Button icon={Check} variant="primary" onClick={() => setCommitDialogOpen(true)} disabled={gitActionsDisabled}>
+                Commit
+              </Button>
+              <Button icon={terminalOpen ? ChevronDown : ChevronUp} onClick={() => setTerminalOpen((value) => !value)}>
+                Terminal
+              </Button>
+            </nav>
+          </div>
+          <RepositoryTabs
+            repositories={repositories}
+            activeRepositoryPath={activeRepositoryPath}
+            loading={loading}
+            desktopReady={desktopReady}
+            onOpen={openRepository}
+            onSelect={(repoPath) => void setActiveRepository(repoPath)}
+            onClose={closeRepository}
+          />
         </header>
 
         <main
@@ -116,6 +147,70 @@ export default function App() {
       <CommitDialog open={commitDialogOpen} onClose={() => setCommitDialogOpen(false)} />
       <CheckoutBlockedDialog />
       {toast ? <Toast message={toast.message} type={toast.type} onClose={clearToast} /> : null}
+    </div>
+  );
+}
+
+function RepositoryTabs({
+  repositories,
+  activeRepositoryPath,
+  loading,
+  desktopReady,
+  onOpen,
+  onSelect,
+  onClose,
+}: {
+  repositories: RepositoryWorkspace[];
+  activeRepositoryPath: string | null;
+  loading: boolean;
+  desktopReady: boolean;
+  onOpen: () => Promise<void>;
+  onSelect: (repoPath: string) => void;
+  onClose: (repoPath: string) => void;
+}) {
+  return (
+    <div className="no-drag flex h-10 items-end gap-1 overflow-x-auto border-t border-white/[0.06] px-3">
+      {repositories.map((repo) => {
+        const active = repo.path === activeRepositoryPath;
+        return (
+          <div
+            key={repo.path}
+            className={cn(
+              "group flex h-9 min-w-[150px] max-w-[240px] items-center gap-2 rounded-t-md border px-2 text-left transition",
+              active
+                ? "border-white/[0.12] border-b-[#070a0f] bg-[#070a0f] text-slate-100"
+                : "border-transparent bg-white/[0.035] text-slate-400 hover:bg-white/[0.06] hover:text-slate-100"
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => onSelect(repo.path)}
+              className="min-w-0 flex-1 text-left"
+              title={repoPathLabel(repo.path)}
+            >
+              <span className="block truncate text-xs font-semibold">{repo.snapshot.name}</span>
+              <span className="block truncate text-[10px] text-slate-500">{repo.snapshot.activeBranch || "detached"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onClose(repo.path)}
+              className="grid h-6 w-6 shrink-0 place-items-center rounded text-slate-600 opacity-80 transition hover:bg-white/[0.08] hover:text-slate-200 group-hover:opacity-100"
+              title="Close repository"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => void onOpen()}
+        disabled={loading || !desktopReady}
+        className="mb-1 grid h-8 w-8 shrink-0 place-items-center rounded-md border border-white/[0.08] text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+        title="Open another repository"
+      >
+        <Plus size={15} />
+      </button>
     </div>
   );
 }
@@ -183,7 +278,14 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
   const Icon = type === "success" ? CircleCheck : type === "error" ? X : Info;
 
   return (
-    <div className="fixed right-5 top-20 z-50 flex min-h-12 w-[320px] items-center gap-3 rounded-md border border-white/10 bg-[#121926]/95 px-3 py-2.5 text-sm text-slate-100 shadow-2xl backdrop-blur">
+    <div
+      className={cn(
+        "fixed right-5 top-20 z-50 flex min-h-12 w-[320px] items-center gap-3 rounded-md border px-3 py-2.5 text-sm text-slate-100 shadow-2xl backdrop-blur",
+        type === "success" && "border-emerald-300/25 bg-emerald-500/14",
+        type === "error" && "border-rose-300/25 bg-rose-500/14",
+        type === "info" && "border-white/10 bg-[#121926]/95"
+      )}
+    >
       <Icon size={18} className={type === "success" ? "text-emerald-300" : type === "error" ? "text-rose-300" : "text-cyan-300"} />
       <span className="min-w-0 flex-1 leading-5">{message}</span>
       <button

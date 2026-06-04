@@ -26,7 +26,7 @@ function createWindow() {
     height: 920,
     minWidth: 1080,
     minHeight: 720,
-    title: "BranchFlow",
+    title: "GitCoso",
     backgroundColor: "#070912",
     titleBarStyle: "hiddenInset",
     webPreferences: {

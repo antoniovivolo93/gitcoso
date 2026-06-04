@@ -1,6 +1,6 @@
-# BranchFlow Project Structure
+# GitCoso Project Structure
 
-BranchFlow is an Electron desktop app with a React renderer and a Git service in the Electron main process.
+GitCoso is an Electron desktop app with a React renderer and a Git service in the Electron main process.
 
 ## Root Files
 
@@ -14,7 +14,7 @@ BranchFlow is an Electron desktop app with a React renderer and a Git service in
 ## Electron Layer
 
 - `electron/main.ts` creates the desktop window, registers IPC handlers, opens the folder picker, and calls the Git service.
-- `electron/preload.cts` exposes the safe `window.branchFlow` API to the renderer. It compiles to `dist-electron/electron/preload.cjs`.
+- `electron/preload.cts` exposes the safe `window.gitCoso` API to the renderer. It compiles to `dist-electron/electron/preload.cjs`.
 - `electron/gitService.ts` wraps real Git operations through `simple-git` and maps Git output into app types.
 - `electron/tsconfig.json` compiles Electron files separately from the renderer.
 

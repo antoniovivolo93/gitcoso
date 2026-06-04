@@ -6,7 +6,7 @@ import "./styles.css";
 const root = document.getElementById("root");
 
 if (!root) {
-  throw new Error("BranchFlow root element not found");
+  throw new Error("GitCoso root element not found");
 }
 
 createRoot(root).render(

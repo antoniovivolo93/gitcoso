@@ -17,6 +17,8 @@ export type CommandLogEntry = {
 };
 
 type RepositoryState = {
+  repositories: RepositoryWorkspace[];
+  activeRepositoryPath: string | null;
   snapshot: RepositorySnapshot;
   selectedHash: string;
   selectedDetails: CommitDetails | null;
@@ -30,6 +32,8 @@ type RepositoryState = {
   clearToast: () => void;
   clearCommandLogs: () => void;
   clearCheckoutBlocked: () => void;
+  setActiveRepository: (repoPath: string) => Promise<void>;
+  closeRepository: (repoPath: string) => void;
   setSelectedCommit: (hash: string) => Promise<void>;
   openRepository: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -47,7 +51,16 @@ type RepositorySet = (
   partial: Partial<RepositoryState> | ((state: RepositoryState) => Partial<RepositoryState>),
 ) => void;
 
+export type RepositoryWorkspace = {
+  path: string;
+  snapshot: RepositorySnapshot;
+  selectedHash: string;
+  selectedDetails: CommitDetails | null;
+};
+
 export const useRepositoryStore = create<RepositoryState>((set, get) => ({
+  repositories: [],
+  activeRepositoryPath: null,
   snapshot: emptySnapshot,
   selectedHash: "",
   selectedDetails: null,
@@ -56,10 +69,10 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
   toast: null,
   commandLogs: [],
   checkoutBlocked: null,
-  desktopReady: Boolean(window.branchFlow),
+  desktopReady: Boolean(window.gitCoso),
 
   syncDesktopBridge: () => {
-    set({ desktopReady: Boolean(window.branchFlow) });
+    set({ desktopReady: Boolean(window.gitCoso) });
   },
 
   clearToast: () => {
@@ -74,13 +87,55 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
     set({ checkoutBlocked: null });
   },
 
+  setActiveRepository: async (repoPath) => {
+    const workspace = get().repositories.find((repo) => repo.path === repoPath);
+    if (!workspace) return;
+
+    const selectedHash = workspace.selectedHash || workspace.snapshot.commits[0]?.hash || "";
+    set({
+      activeRepositoryPath: repoPath,
+      snapshot: workspace.snapshot,
+      selectedHash,
+      selectedDetails: workspace.selectedDetails,
+      checkoutBlocked: null,
+      error: null,
+    });
+
+    if (selectedHash && !workspace.selectedDetails) {
+      await get().setSelectedCommit(selectedHash);
+    }
+  },
+
+  closeRepository: (repoPath) => {
+    set((state) => {
+      const repositories = state.repositories.filter((repo) => repo.path !== repoPath);
+      if (state.activeRepositoryPath !== repoPath) {
+        return { repositories };
+      }
+
+      const nextWorkspace = repositories[0] ?? null;
+      return {
+        repositories,
+        activeRepositoryPath: nextWorkspace?.path ?? null,
+        snapshot: nextWorkspace?.snapshot ?? emptySnapshot,
+        selectedHash: nextWorkspace?.selectedHash ?? "",
+        selectedDetails: nextWorkspace?.selectedDetails ?? null,
+        checkoutBlocked: null,
+        error: null,
+      };
+    });
+  },
+
   setSelectedCommit: async (hash) => {
     const { snapshot } = get();
     const commandId = startCommand(set, `git show ${hash.slice(0, 7)}`);
     set({ selectedHash: hash, loading: true, error: null });
     try {
       const selectedDetails = await getDesktopApi().getCommitDetails(snapshot.path, hash);
-      set({ selectedDetails });
+      set((state) => ({
+        selectedDetails: state.snapshot.path === snapshot.path ? selectedDetails : state.selectedDetails,
+        repositories: updateWorkspaceSelection(state.repositories, snapshot.path, hash, selectedDetails),
+      }));
       finishCommand(set, commandId, "success");
     } catch (error) {
       const message = getError(error);
@@ -92,7 +147,7 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
   },
 
   openRepository: async () => {
-    await runSnapshotAction(set, async () => getDesktopApi().openRepository(), undefined, "open repository");
+    await runSnapshotAction(set, async () => getDesktopApi().openRepository(), undefined, "open repository", true);
   },
 
   refresh: async () => {
@@ -112,7 +167,7 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
     if (!snapshot.path) return;
     const api = getDesktopApi();
     if (typeof api.checkoutRemoteBranch !== "function") {
-      throw new Error("Desktop bridge is out of date. Close BranchFlow completely and restart it with npm run dev.");
+      throw new Error("Desktop bridge is out of date. Close GitCoso completely and restart it with npm run dev.");
     }
     await runSnapshotAction(
       set,
@@ -133,7 +188,7 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
       async () => {
         const api = getDesktopApi();
         if (typeof api.stashAndCheckout !== "function") {
-          throw new Error("Desktop bridge is out of date. Close BranchFlow completely and restart it with npm run dev.");
+          throw new Error("Desktop bridge is out of date. Close GitCoso completely and restart it with npm run dev.");
         }
         return api.stashAndCheckout(snapshot.path!, checkoutBlocked.branch);
       },
@@ -172,7 +227,7 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
     set({
       toast: {
         id: Date.now(),
-        type: pulledCount > 0 ? "success" : "info",
+        type: "success",
         message: pulledCount > 0
           ? `Pull completato: ${pulledCount} commit ${pulledCount === 1 ? "scaricato" : "scaricati"}.`
           : "Branch gia allineato.",
@@ -191,7 +246,8 @@ async function runSnapshotAction(
   set: RepositorySet,
   action: () => Promise<RepositorySnapshot>,
   checkoutBranch?: string,
-  command?: string
+  command?: string,
+  activateSnapshot = false
 ): Promise<RepositorySnapshot | null> {
   const commandId = command ? startCommand(set, command) : null;
   set({ loading: true, error: null });
@@ -201,7 +257,30 @@ async function runSnapshotAction(
     const selectedDetails = selectedHash
       ? await getDesktopApi().getCommitDetails(snapshot.path, selectedHash)
       : null;
-    set({ snapshot, selectedHash, selectedDetails, checkoutBlocked: null });
+    if (!snapshot.path) {
+      if (commandId !== null) {
+        finishCommand(set, commandId, "success");
+      }
+      return null;
+    }
+    set((state) => {
+      const shouldActivate = activateSnapshot || state.activeRepositoryPath === snapshot.path || !state.activeRepositoryPath;
+      const repositories = upsertWorkspace(state.repositories, {
+        path: snapshot.path!,
+        snapshot,
+        selectedHash,
+        selectedDetails,
+      });
+
+      return {
+        repositories,
+        activeRepositoryPath: shouldActivate ? snapshot.path : state.activeRepositoryPath,
+        snapshot: shouldActivate ? snapshot : state.snapshot,
+        selectedHash: shouldActivate ? selectedHash : state.selectedHash,
+        selectedDetails: shouldActivate ? selectedDetails : state.selectedDetails,
+        checkoutBlocked: null,
+      };
+    });
     if (commandId !== null) {
       finishCommand(set, commandId, "success");
       startCommand(set, "git show --stat --patch", "success");
@@ -226,6 +305,31 @@ async function runSnapshotAction(
   } finally {
     set({ loading: false });
   }
+}
+
+function upsertWorkspace(repositories: RepositoryWorkspace[], workspace: RepositoryWorkspace) {
+  const index = repositories.findIndex((repo) => repo.path === workspace.path);
+  if (index === -1) {
+    return [...repositories, workspace];
+  }
+
+  return repositories.map((repo, repoIndex) => repoIndex === index ? workspace : repo);
+}
+
+function updateWorkspaceSelection(
+  repositories: RepositoryWorkspace[],
+  repoPath: string | null,
+  selectedHash: string,
+  selectedDetails: CommitDetails,
+) {
+  if (!repoPath) {
+    return repositories;
+  }
+
+  return repositories.map((repo) => repo.path === repoPath
+    ? { ...repo, selectedHash, selectedDetails }
+    : repo
+  );
 }
 
 function startCommand(
@@ -379,9 +483,9 @@ function parseCheckoutBlockedFiles(message: string): string[] {
 }
 
 function getDesktopApi() {
-  if (!window.branchFlow) {
-    throw new Error("Desktop bridge unavailable. Launch BranchFlow with `npm run dev` and use the Electron window, not the browser tab.");
+  if (!window.gitCoso) {
+    throw new Error("Desktop bridge unavailable. Launch GitCoso with `npm run dev` and use the Electron window, not the browser tab.");
   }
 
-  return window.branchFlow;
+  return window.gitCoso;
 }

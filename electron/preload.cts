@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { BranchFlowApi } from "../src/shared/types.js";
+import type { GitCosoApi } from "../src/shared/types.js";
 
-const api: BranchFlowApi = {
+const api: GitCosoApi = {
   openRepository: () => ipcRenderer.invoke("repo:open"),
   refreshRepository: (repoPath) => ipcRenderer.invoke("repo:refresh", repoPath),
   getCommitDetails: (repoPath, hash) => ipcRenderer.invoke("commit:details", repoPath, hash),
@@ -17,4 +17,4 @@ const api: BranchFlowApi = {
   push: (repoPath) => ipcRenderer.invoke("repo:push", repoPath)
 };
 
-contextBridge.exposeInMainWorld("branchFlow", api);
+contextBridge.exposeInMainWorld("gitCoso", api);

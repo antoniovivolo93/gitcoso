@@ -1,13 +1,13 @@
-# BranchFlow Architecture
+# GitCoso Architecture
 
 ## Runtime Shape
 
-BranchFlow has two main runtime contexts:
+GitCoso has two main runtime contexts:
 
 - Electron main process: owns native capabilities, filesystem dialogs, and Git execution.
 - React renderer: owns UI, interaction state, and visual commit graph rendering.
 
-The renderer never imports Node or Git directly. All desktop and Git actions go through `window.branchFlow`, exposed by the preload script.
+The renderer never imports Node or Git directly. All desktop and Git actions go through `window.gitCoso`, exposed by the preload script.
 
 ## IPC Contract
 
@@ -27,7 +27,7 @@ Types for these calls live in `src/shared/types.ts`.
 
 ## Git Data Flow
 
-1. The renderer calls a method on `window.branchFlow`.
+1. The renderer calls a method on `window.gitCoso`.
 2. `electron/preload.cts` forwards the call to an IPC channel.
 3. `electron/main.ts` receives the IPC request.
 4. `electron/gitService.ts` runs Git through `simple-git`.

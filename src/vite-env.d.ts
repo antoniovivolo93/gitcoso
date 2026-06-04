@@ -1,9 +1,9 @@
 /// <reference types="vite/client" />
 
-import type { BranchFlowApi } from "./shared/types";
+import type { GitCosoApi } from "./shared/types";
 
 declare global {
   interface Window {
-    branchFlow: BranchFlowApi;
+    gitCoso: GitCosoApi;
   }
 }

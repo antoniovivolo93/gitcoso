@@ -142,7 +142,7 @@ export async function stashAndCheckoutBranch(
     "push",
     "-u",
     "-m",
-    `BranchFlow: before checkout ${branch}`,
+    `GitCoso: before checkout ${branch}`,
   ]);
   await repo.checkout(branch);
   return getRepositorySnapshot(repoPath);

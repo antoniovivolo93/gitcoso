@@ -44,6 +44,10 @@ button {
   -webkit-app-region: no-drag;
 }
 
+.titlebar-safe-area {
+  padding-left: 72px;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

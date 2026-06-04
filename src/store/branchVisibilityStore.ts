@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { BranchKind } from "../shared/types";
 
-const hiddenBranchesStorageKey = "branchflow.hiddenBranches";
+const hiddenBranchesStorageKey = "gitcoso.hiddenBranches";
 
 type BranchVisibilityState = {
   hiddenBranches: Set<string>;

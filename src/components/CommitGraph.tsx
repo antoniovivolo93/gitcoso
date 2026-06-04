@@ -135,7 +135,7 @@ export function CommitGraph() {
             Open a Git repository folder
           </h2>
           <p className="mb-6 text-sm leading-6 text-slate-400">
-            BranchFlow will read local and remote branches, then draw the real
+            GitCoso will read local and remote branches, then draw the real
             commit tree from Git history.
           </p>
           {!desktopReady ? (

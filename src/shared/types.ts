@@ -64,7 +64,7 @@ export type GitOperationResult = {
   message: string;
 };
 
-export type BranchFlowApi = {
+export type GitCosoApi = {
   openRepository: () => Promise<RepositorySnapshot>;
   refreshRepository: (repoPath: string) => Promise<RepositorySnapshot>;
   getCommitDetails: (

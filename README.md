@@ -1,6 +1,6 @@
-# BranchFlow
+# GitCoso
 
-BranchFlow is a modern desktop Git client built with Electron, React, TypeScript, Tailwind CSS, Zustand, and `simple-git`.
+GitCoso is a modern desktop Git client built with Electron, React, TypeScript, Tailwind CSS, Zustand, and `simple-git`.
 
 The interface is intentionally original: dark professional UI, visual commit graph, branch sidebar, commit details, and quick Git actions without using any third-party product branding or assets.
 
@@ -19,7 +19,7 @@ The interface is intentionally original: dark professional UI, visual commit gra
 - npm 10+
 - Git CLI available in PATH
 
-Rust is not required because BranchFlow uses Electron for its desktop shell.
+Rust is not required because GitCoso uses Electron for its desktop shell.
 
 ## Install
 
@@ -45,9 +45,9 @@ The command compiles the React renderer, Electron main process, and preload scri
 
 ## Git Notes
 
-BranchFlow uses the Git CLI through `simple-git`. Commit operations currently commit only files that are already staged.
+GitCoso uses the Git CLI through `simple-git`. Commit operations currently commit only files that are already staged.
 
-If a selected folder is not a Git repository, BranchFlow keeps the repository selector active and shows the error in the repository status area.
+If a selected folder is not a Git repository, GitCoso keeps the repository selector active and shows the error in the repository status area.
 
 ## Project Structure
 
