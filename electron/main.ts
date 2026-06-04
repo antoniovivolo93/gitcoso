@@ -175,8 +175,14 @@ function watchRepository(repoPath: string) {
 
   try {
     const watcher = watch(repoPath, { recursive: true }, (_eventType, filename) => {
-      const relativePath = typeof filename === "string" ? filename : "";
-      if (relativePath.includes("node_modules") || relativePath.includes("dist-electron")) return;
+      const relativePath = typeof filename === "string" ? filename.replace(/\\/g, "/") : "";
+      const pathParts = relativePath.split("/");
+      if (
+        pathParts.includes(".git")
+        || pathParts.includes("node_modules")
+        || pathParts.includes("dist")
+        || pathParts.includes("dist-electron")
+      ) return;
       const state = repositoryWatchers.get(repoPath);
       if (!state) return;
       if (state.timeout) {

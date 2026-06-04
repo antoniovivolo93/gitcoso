@@ -923,14 +923,24 @@ function pickStableLane(
   activeLanes: Set<number>,
   nextLane: number,
 ): number {
+  const currentLane = laneByHash.get(hash);
   const branchRef = refs.find((ref) => !ref.startsWith("tag:"));
   if (branchRef) {
     const existing = laneByRef.get(branchRef);
     if (existing !== undefined) return existing;
 
+    if (currentLane !== undefined) {
+      refs
+        .filter((ref) => !ref.startsWith("tag:"))
+        .forEach((ref) => laneByRef.set(ref, currentLane));
+      return currentLane;
+    }
+
     // Try to reuse a freed lane, otherwise allocate next
     const lane = findFreeLane(activeLanes, nextLane);
-    laneByRef.set(branchRef, lane);
+    refs
+      .filter((ref) => !ref.startsWith("tag:"))
+      .forEach((ref) => laneByRef.set(ref, lane));
     return lane;
   }
 
@@ -939,7 +949,6 @@ function pickStableLane(
     .find((lane) => lane !== undefined);
   if (parentLane !== undefined) return parentLane;
 
-  const currentLane = laneByHash.get(hash);
   if (currentLane !== undefined) return currentLane;
 
   return findFreeLane(activeLanes, nextLane);

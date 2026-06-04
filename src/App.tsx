@@ -77,7 +77,7 @@ export default function App() {
     return window.gitCoso.onRepositoryChanged((repoPath) => {
       const activePath = useRepositoryStore.getState().snapshot.path;
       if (repoPath === activePath) {
-        void useRepositoryStore.getState().refresh();
+        void useRepositoryStore.getState().refresh(true);
       }
     });
   }, []);
@@ -111,7 +111,7 @@ export default function App() {
               <Button icon={FolderOpen} onClick={openRepository} disabled={loading || !desktopReady}>
                 {t("actions.open")}
               </Button>
-              <Button icon={RefreshCw} onClick={refresh} disabled={gitActionsDisabled}>
+              <Button icon={RefreshCw} onClick={() => void refresh()} disabled={gitActionsDisabled}>
                 {t("actions.refresh")}
               </Button>
               <Button icon={Download} onClick={fetch} disabled={gitActionsDisabled}>

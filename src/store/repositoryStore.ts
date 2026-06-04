@@ -41,7 +41,7 @@ type RepositoryState = {
   setSelectedCommit: (hash: string) => Promise<void>;
   selectWorkingTree: () => void;
   openRepository: () => Promise<void>;
-  refresh: () => Promise<void>;
+  refresh: (silent?: boolean) => Promise<void>;
   checkoutBranch: (branch: string) => Promise<void>;
   checkoutRemoteBranch: (remoteBranch: string) => Promise<void>;
   stashAndCheckout: () => Promise<void>;
@@ -210,10 +210,15 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
     await runSnapshotAction(set, async () => getDesktopApi().openRepository(), undefined, "open repository", true);
   },
 
-  refresh: async () => {
+  refresh: async (silent = false) => {
     const { snapshot } = get();
     if (!snapshot.path) return;
-    await runSnapshotAction(set, async () => getDesktopApi().refreshRepository(snapshot.path!), undefined, "git branch -a && git log --all && git status");
+    await runSnapshotAction(
+      set,
+      async () => getDesktopApi().refreshRepository(snapshot.path!),
+      undefined,
+      silent ? undefined : "git branch -a && git log --all && git status"
+    );
   },
 
   checkoutBranch: async (branch) => {
