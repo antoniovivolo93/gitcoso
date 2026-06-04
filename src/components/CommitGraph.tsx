@@ -539,7 +539,7 @@ function GraphLaneGuides({
         y="0"
         width={GRAPH_LEFT + (maxLane + 1) * LANE_WIDTH + GRAPH_RIGHT_PADDING}
         height="100%"
-        fill="#0c1018"
+        fill="transparent"
       />
       {Array.from({ length: maxLane + 1 }, (_, lane) => {
         const laneCommits = commits
